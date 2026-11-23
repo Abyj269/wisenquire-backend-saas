@@ -43,6 +43,18 @@ class TenantAccessTest {
         assertThrows(AccessDeniedException.class, () -> access.branch(5L));
         assertThrows(AccessDeniedException.class, () -> access.companyWide(10L));
     }
+    @Test void broadcastOfAnotherCompanyIsDenied() {   // F-1
+        signIn(RoleLevel.COMPANY);
+        when(em.find(Broadcast.class, 7L)).thenReturn(Broadcast.builder().id(7L).company(other).build());
+        assertThrows(AccessDeniedException.class, () -> access.record(Broadcast.class, 7L));
+    }
+    @Test void companyWideBroadcastNeedsCompanyWideScope() {   // F-1
+        when(em.find(Broadcast.class, 8L)).thenReturn(Broadcast.builder().id(8L).company(allowed).build());
+        signIn(RoleLevel.COMPANY);
+        assertNotNull(access.record(Broadcast.class, 8L));
+        signIn(RoleLevel.BRANCH);
+        assertThrows(AccessDeniedException.class, () -> access.record(Broadcast.class, 8L));
+    }
     @Test void backgroundScopeCannotEscapeAndIsAlwaysCleared() {
         when(em.find(Company.class, 10L)).thenReturn(allowed);
         when(em.find(Company.class, 20L)).thenReturn(other);

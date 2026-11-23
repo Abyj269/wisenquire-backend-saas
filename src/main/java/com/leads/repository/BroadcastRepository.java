@@ -21,6 +21,9 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long>, Jpa
 
     Page<Broadcast> findByCompanyIdAndBranchIdAndDeletedAtIsNull(Long companyId, Long branchId, Pageable pageable);
 
+    /** F-1: list for BRANCH-level users who did not pick a branch — only their permitted branches. */
+    Page<Broadcast> findByCompanyIdAndBranchIdInAndDeletedAtIsNull(Long companyId, java.util.Collection<Long> branchIds, Pageable pageable);
+
     Optional<Broadcast> findByIdAndCompanyIdAndDeletedAtIsNull(Long id, Long companyId);
 
     List<Broadcast> findByStatusAndScheduledAtLessThanEqualAndDeletedAtIsNull(BroadcastStatus status, LocalDateTime now);

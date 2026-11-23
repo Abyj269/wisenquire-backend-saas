@@ -57,17 +57,24 @@ public class BroadcastServiceImpl implements BroadcastService {
     public BroadcastDto createBroadcast(BroadcastCreateRequest request) {
         access.permission("BROADCASTS:ADD");
 
-        Company company = companyRepo.findById(request.getCompanyId())
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + request.getCompanyId()));
+        // F-1: company, branch and WhatsApp number must all be inside the caller's scope and belong together.
+        Company company = access.company(request.getCompanyId());
 
         Branch branch = null;
         if (request.getBranchId() != null) {
-            branch = branchRepo.findById(request.getBranchId())
-                    .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + request.getBranchId()));
+            branch = access.branch(request.getBranchId());
+            access.sameCompany(company.getId(), branch.getCompany());
+        } else {
+            access.companyWide(company.getId());
         }
 
-        WhatsAppConfiguration config = configRepo.findById(request.getWhatsappConfigurationId())
-                .orElseThrow(() -> new IllegalArgumentException("WhatsApp configuration not found: " + request.getWhatsappConfigurationId()));
+        WhatsAppConfiguration config = access.record(WhatsAppConfiguration.class, request.getWhatsappConfigurationId());
+        boolean configMatches = Objects.equals(config.getCompany().getId(), company.getId())
+                && (branch == null || Objects.equals(config.getBranch().getId(), branch.getId()));
+        if (!configMatches) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "The selected WhatsApp number does not belong to this company/branch.");
+        }
 
         User currentUser = authService.getCurrentUser();
 
@@ -113,6 +120,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional(readOnly = true)
     public BroadcastDto getBroadcastById(Long id) {
         access.permission("BROADCASTS:VIEW");
+        access.record(Broadcast.class, id); // F-1
         Broadcast broadcast = broadcastRepo.findById(id)
                 .filter(b -> b.getDeletedAt() == null)
                 .orElseThrow(() -> new IllegalArgumentException("Broadcast not found: " + id));
@@ -123,9 +131,18 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional(readOnly = true)
     public Page<BroadcastDto> getBroadcasts(Long companyId, Long branchId, Pageable pageable) {
         access.permission("BROADCASTS:VIEW");
-        Page<Broadcast> page = branchId != null
-                ? broadcastRepo.findByCompanyIdAndBranchIdAndDeletedAtIsNull(companyId, branchId, pageable)
-                : broadcastRepo.findByCompanyIdAndDeletedAtIsNull(companyId, pageable);
+        access.scope(companyId, branchId); // F-1
+        Page<Broadcast> page;
+        if (branchId != null) {
+            page = broadcastRepo.findByCompanyIdAndBranchIdAndDeletedAtIsNull(companyId, branchId, pageable);
+        } else {
+            List<Long> permittedBranches = access.branchIds(); // null = no branch restriction for this caller
+            page = permittedBranches == null
+                    ? broadcastRepo.findByCompanyIdAndDeletedAtIsNull(companyId, pageable)
+                    : permittedBranches.isEmpty()
+                        ? Page.empty(pageable)
+                        : broadcastRepo.findByCompanyIdAndBranchIdInAndDeletedAtIsNull(companyId, permittedBranches, pageable);
+        }
         return page.map(this::mapToDto);
     }
 
@@ -133,6 +150,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional
     public BroadcastDto sendBroadcast(Long broadcastId) {
         access.permission("BROADCASTS:SEND");
+        access.record(Broadcast.class, broadcastId); // F-1 (also passes under the scheduler's inCompany scope)
         Broadcast broadcast = broadcastRepo.findById(broadcastId)
                 .filter(b -> b.getDeletedAt() == null)
                 .orElseThrow(() -> new IllegalArgumentException("Broadcast not found: " + broadcastId));
@@ -303,6 +321,10 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional(readOnly = true)
     public Page<BroadcastRecipientDto> getBroadcastLogs(Long broadcastId, Pageable pageable) {
         access.permission("BROADCASTS:VIEW");
+        Broadcast broadcast = access.record(Broadcast.class, broadcastId); // F-1
+        if (broadcast.getDeletedAt() != null) {
+            throw new IllegalArgumentException("Broadcast not found: " + broadcastId);
+        }
         Page<BroadcastRecipient> page = recipientRepo.findByBroadcastId(broadcastId, pageable);
         return page.map(this::mapRecipientToDto);
     }
@@ -311,6 +333,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional
     public void deleteBroadcast(Long broadcastId) {
         access.permission("BROADCASTS:DELETE");
+        access.record(Broadcast.class, broadcastId); // F-1
         Broadcast broadcast = broadcastRepo.findById(broadcastId)
                 .filter(b -> b.getDeletedAt() == null)
                 .orElseThrow(() -> new IllegalArgumentException("Broadcast not found: " + broadcastId));

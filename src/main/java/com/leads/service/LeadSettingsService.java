@@ -517,7 +517,9 @@ public class LeadSettingsService {
         }
 
         if (dto.getDefaultStatusId() != null) {
-            LeadStatus status = statusRepo.findById(dto.getDefaultStatusId()).orElse(null);
+            // F-10: the default status must be in scope and belong to this company.
+            LeadStatus status = access.record(LeadStatus.class, dto.getDefaultStatusId());
+            access.sameCompany(companyId, status.getCompany());
             settings.setDefaultStatus(status);
         }
 
