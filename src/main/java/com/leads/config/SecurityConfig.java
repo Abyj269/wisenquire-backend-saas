@@ -1,0 +1,98 @@
+package com.leads.config;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import jakarta.servlet.http.HttpServletResponse;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
+        return authConfig.getAuthenticationManager();
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> {})
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // Both fire before the request ever reaches a controller (no/invalid
+                // JWT, or a URL-level authorization rule) — without these, Spring
+                // Security's own defaults return a blank or plain-text body, which is
+                // where the frontend's raw "403 OK"-style fallback text was coming
+                // from. GlobalExceptionHandler covers the same two cases for
+                // @PreAuthorize denials thrown from inside a controller method; this
+                // covers denials from the filter chain itself.
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint((request, response, authException) -> writeJsonError(response, 401, "Please log in to continue."))
+                        .accessDeniedHandler((request, response, accessDeniedException) -> writeJsonError(response, 403, "You don't have permission to do this."))
+                )
+                .authorizeHttpRequests(auth -> auth
+                        // Public endpoints - listed both with and without the
+                        // "/api/v1" prefix. In local/embedded-Tomcat dev mode,
+                        // server.servlet.context-path is applied at the
+                        // servlet-container level, so both MVC routing and
+                        // these security matchers see the bare "/auth/login"
+                        // form. Deployed as a WAR under an external Tomcat's
+                        // own context (e.g. astra_crm_live.war -> context
+                        // "/astra_crm_live", stacked with this app's own
+                        // server.servlet.context-path=/api/v1), MVC routing
+                        // still resolves to the bare form, but these request
+                        // matchers only see Tomcat's own context path
+                        // stripped - the "/api/v1" segment is still present
+                        // from their point of view. Listing both covers both
+                        // deployment modes.
+                        .requestMatchers(
+                                "/auth/login", "/api/v1/auth/login",
+                                "/auth/verify-otp", "/api/v1/auth/verify-otp",
+                                "/auth/refresh", "/api/v1/auth/refresh",
+                                "/whatsapp/webhook", "/api/v1/whatsapp/webhook",
+                                "/swagger-ui/**", "/api/v1/swagger-ui/**",
+                                "/swagger-ui.html", "/api/v1/swagger-ui.html",
+                                "/v3/api-docs/**", "/api/v1/v3/api-docs/**",
+                                "/ws/**", "/api/v1/ws/**"
+                        ).permitAll()
+                        // Any other request must be authenticated
+                        .anyRequest().authenticated()
+                );
+
+        http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    private void writeJsonError(HttpServletResponse response, int status, String message) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.getWriter().write("{\"message\":\"" + message.replace("\"", "'") + "\"}");
+    }
+}

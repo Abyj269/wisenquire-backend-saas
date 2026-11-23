@@ -1,0 +1,63 @@
+# MySQL on the Ubuntu production server. All secrets come from environment
+# variables (e.g. Tomcat's setenv.sh / systemd unit) — nothing here is a
+# real credential. Server-level settings (lower_case_table_names=1,
+# utf8mb4/utf8mb4_0900_ai_ci, UTC) must match the Windows dev instance
+# exactly — see docs/DATABASE_ARCHITECTURE.md.
+server:
+  # Trust nginx's X-Forwarded-* headers so any absolute URL the app
+  # generates (e.g. Swagger UI's detected server URL) reflects the public
+  # https://api.autoversa.com/astra_crm_live/... address instead of the
+  # internal http://127.0.0.1:8081/astra_crm_live/... one.
+  forward-headers-strategy: framework
+
+spring:
+  datasource:
+    # sslMode=REQUIRED (not VERIFY_IDENTITY): the prod MySQL server's TLS
+    # certificate is self-signed (MySQL 8's own auto-generated cert), which
+    # doesn't chain to any CA the JVM trusts - VERIFY_IDENTITY fails the
+    # handshake outright (CertPathValidatorException). REQUIRED still
+    # encrypts the connection, just skips the cert-chain/hostname check.
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME:wisenquire_db_new}?sslMode=REQUIRED&allowPublicKeyRetrieval=false&serverTimezone=UTC&characterEncoding=UTF-8&useUnicode=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      pool-name: LeadsHikariPool
+      maximum-pool-size: 30
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      # Schema is owned by Flyway migrations, not Hibernate — this only
+      # verifies entities match the DB, never issues CREATE/ALTER in prod.
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  security:
+    allowed-origins: ${ALLOWED_ORIGINS}
+    jwt:
+      secret: ${JWT_SECRET}
+    super-admin:
+      email: ${SUPER_ADMIN_EMAIL}
+      password: ${SUPER_ADMIN_PASSWORD}
+    otp:
+      # The OTP must only ever reach the user by email in prod.
+      expose-in-response: false
+
+logging:
+  level:
+    root: WARN
+    com.leads: INFO

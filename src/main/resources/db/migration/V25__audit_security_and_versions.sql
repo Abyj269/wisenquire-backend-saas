@@ -1,0 +1,11 @@
+ALTER TABLE users ADD COLUMN session_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE login_otps MODIFY code VARCHAR(100) NOT NULL;
+ALTER TABLE login_otps ADD COLUMN challenge_id VARCHAR(36) NULL;
+ALTER TABLE login_otps ADD COLUMN attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE login_otps ADD COLUMN session_version BIGINT NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX idx_otp_challenge ON login_otps(challenge_id);
+UPDATE login_otps SET is_used = true;
+ALTER TABLE leads ADD COLUMN version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE customers ADD COLUMN version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE quotations ADD COLUMN version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE whatsapp_conversations ADD COLUMN version BIGINT NOT NULL DEFAULT 0;

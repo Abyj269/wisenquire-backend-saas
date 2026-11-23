@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Quotation</title>
+    <style>
+        @page { size: A4; margin: 28px 36px; }
+        body { font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #1f2937; margin: 0; }
+        .letterhead { width: 100%; border-bottom: 2px solid #1f2937; padding-bottom: 12px; margin-bottom: 18px; }
+        .letterhead-inner { width: 100%; margin-bottom: 16px; }
+        .company-logo { max-height: 48px; max-width: 180px; }
+        .company-name { font-size: 18px; font-weight: bold; margin: 0 0 2px 0; }
+        .company-meta { font-size: 9.5px; color: #6b7280; margin: 0 0 1px 0; }
+        .doc-title { text-align: right; vertical-align: top; }
+        .doc-title h1 { font-size: 20px; margin: 0; letter-spacing: 1px; color: #1f2937; }
+        .doc-meta { margin: 8px 0 0 0; }
+        .doc-number-badge {
+            display: inline-block; white-space: nowrap; background: #eef2ff; color: #4338ca; font-weight: bold;
+            font-size: 12px; padding: 3px 10px; border-radius: 4px; letter-spacing: 0.3px;
+        }
+        .doc-date { display: block; margin-top: 6px; font-size: 10px; color: #6b7280; }
+
+        .parties { width: 100%; margin-bottom: 18px; }
+        .party-box { width: 49%; display: inline-block; vertical-align: top; }
+        .party-box.right { text-align: right; }
+        .party-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 4px; }
+        .party-name { font-size: 13px; font-weight: bold; margin-bottom: 2px; }
+        .party-line { font-size: 10px; color: #374151; margin-bottom: 1px; }
+
+        table.items { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+        table.items th { background: #1f2937; color: #ffffff; font-size: 9.5px; text-transform: uppercase; padding: 6px 6px; text-align: left; }
+        table.items td { font-size: 10px; padding: 6px 6px; border-bottom: 1px solid #e5e7eb; }
+        table.items th.num, table.items td.num { text-align: right; }
+        .item-desc { font-size: 9px; color: #6b7280; }
+
+        .totals { width: 100%; margin-top: 6px; }
+        .totals-inner { width: 260px; float: right; }
+        .totals-row { width: 100%; padding: 4px 0; font-size: 10.5px; }
+        .totals-row .label { color: #6b7280; }
+        .totals-row .value { text-align: right; }
+        .totals-row.grand { border-top: 2px solid #1f2937; margin-top: 4px; padding-top: 8px; font-size: 13px; font-weight: bold; color: #1f2937; }
+
+        .notes { clear: both; margin-top: 40px; padding-top: 10px; border-top: 1px solid #e5e7eb; font-size: 9.5px; color: #4b5563; }
+        .notes strong, .terms strong { display: block; margin-bottom: 6px; color: #1f2937; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
+        .terms { clear: both; margin-top: 14px; padding-top: 10px; border-top: 1px solid #e5e7eb; font-size: 9.5px; color: #4b5563; }
+        .terms-list { margin: 0; padding-left: 16px; }
+        .terms-list li { margin-bottom: 4px; text-align: justify; line-height: 1.4; }
+        .footer { margin-top: 30px; font-size: 8.5px; color: #9ca3af; text-align: center; }
+        .print-meta { margin-top: 4px; }
+    </style>
+</head>
+<body>
+
+<table class="letterhead-inner">
+    <tr>
+        <td style="width: 55%; vertical-align: top;">
+            <img th:if="${letterheadLogoUrl}" th:src="${letterheadLogoUrl}" class="company-logo"/>
+            <p class="company-name" th:text="${company.name}">Company Name</p>
+            <p class="company-meta" th:if="${branchAddress}" th:text="${branchAddress}">Address</p>
+            <p class="company-meta" th:if="${branchPhone}" th:text="${branchPhone}">Phone</p>
+            <p class="company-meta" th:if="${letterheadTrnNumber}" th:text="'TRN: ' + ${letterheadTrnNumber}">TRN</p>
+        </td>
+        <td class="doc-title" style="width: 45%;">
+            <h1>QUOTATION</h1>
+            <p class="doc-meta">
+                <span class="doc-number-badge" th:text="${quotation.quotationNumber}">QT-2026-0001</span>
+                <span class="doc-date" th:text="${createdAtFormatted}">Date</span>
+            </p>
+            <!-- doc-date is display:block, so it wraps onto its own line below the badge -->
+        </td>
+    </tr>
+</table>
+
+<table class="parties">
+    <tr>
+        <td class="party-box">
+            <p class="party-label">Prepared For</p>
+            <p class="party-name" th:text="${quotation.customerName}">Customer Name</p>
+            <p class="party-line" th:if="${quotation.customerCompanyName}" th:text="${quotation.customerCompanyName}">Customer Company</p>
+            <p class="party-line" th:if="${quotation.customerAddress}" th:text="${quotation.customerAddress}">Address</p>
+            <p class="party-line" th:if="${quotation.customerPhone}" th:text="${quotation.customerPhone}">Phone</p>
+            <p class="party-line" th:if="${quotation.customerEmail}" th:text="${quotation.customerEmail}">Email</p>
+            <p class="party-line" th:if="${quotation.customerTaxNumber}" th:text="'Tax / VAT No: ' + ${quotation.customerTaxNumber}">Tax No</p>
+        </td>
+        <td class="party-box right">
+            <p class="party-label">Reference</p>
+            <p class="party-line" th:text="'Lead: ' + ${quotation.lead.leadNumber}">Lead Ref</p>
+            <p class="party-line" th:text="'Currency: ' + ${quotation.currency}">Currency</p>
+            <p class="party-line" th:if="${quotation.createdBy != null}" th:text="'Prepared By: ' + ${quotation.createdBy.fullName}">Prepared By</p>
+        </td>
+    </tr>
+</table>
+
+<table class="items">
+    <thead>
+    <tr>
+        <th>#</th>
+        <th>Item</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit Price</th>
+        <th class="num">Discount</th>
+        <th class="num">VAT</th>
+        <th class="num">Total</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:each="item, iter : ${items}">
+        <td th:text="${iter.count}">1</td>
+        <td>
+            <span th:text="${item.itemName}">Item Name</span>
+            <div class="item-desc" th:if="${item.itemDescription}" th:text="${item.itemDescription}">Description</div>
+        </td>
+        <td class="num" th:text="${item.quantity}">1</td>
+        <td class="num" th:text="${#numbers.formatDecimal(item.unitPrice, 1, 2)}">0.00</td>
+        <td class="num" th:text="${item.discountPercent} + '% (' + ${#numbers.formatDecimal(item.discountAmount, 1, 2)} + ')'">0%</td>
+        <td class="num" th:text="${item.taxPercent} + '% (' + ${#numbers.formatDecimal(item.taxAmount, 1, 2)} + ')'">0%</td>
+        <td class="num" th:text="${#numbers.formatDecimal(item.lineTotal, 1, 2)}">0.00</td>
+    </tr>
+    </tbody>
+</table>
+
+<table class="totals">
+    <tr>
+        <td>
+            <table class="totals-inner">
+                <tr class="totals-row">
+                    <td class="label">Subtotal</td>
+                    <td class="value" th:text="${quotation.currency} + ' ' + ${#numbers.formatDecimal(quotation.subtotal, 1, 2)}">0.00</td>
+                </tr>
+                <tr class="totals-row">
+                    <td class="label">Discount</td>
+                    <td class="value" th:text="'- ' + ${quotation.currency} + ' ' + ${#numbers.formatDecimal(quotation.totalDiscount, 1, 2)}">0.00</td>
+                </tr>
+                <tr class="totals-row">
+                    <td class="label">VAT / Tax</td>
+                    <td class="value" th:text="'+ ' + ${quotation.currency} + ' ' + ${#numbers.formatDecimal(quotation.totalTax, 1, 2)}">0.00</td>
+                </tr>
+                <tr class="totals-row grand">
+                    <td class="label">Grand Total</td>
+                    <td class="value" th:text="${quotation.currency} + ' ' + ${#numbers.formatDecimal(quotation.grandTotal, 1, 2)}">0.00</td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+
+<div class="notes" th:if="${quotation.notes}">
+    <strong>Notes</strong>
+    <p th:text="${quotation.notes}">Notes</p>
+</div>
+
+<div class="terms" th:if="${!termsLines.isEmpty()}">
+    <strong>Terms &amp; Conditions</strong>
+    <ul class="terms-list">
+        <li th:each="line : ${termsLines}" th:text="${line}">Term</li>
+    </ul>
+</div>
+
+<div class="footer">
+    This quotation was generated electronically and is valid as per the accompanying terms discussed.
+    <div class="print-meta" th:text="'Printed by ' + ${printedByName} + ' on ' + ${printedAt}">Printed by / on</div>
+</div>
+
+</body>
+</html>

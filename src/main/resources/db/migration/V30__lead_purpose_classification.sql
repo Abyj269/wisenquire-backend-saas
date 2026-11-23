@@ -1,0 +1,2 @@
+ALTER TABLE lead_purposes
+    ADD COLUMN classification VARCHAR(30) NOT NULL DEFAULT 'POTENTIAL';

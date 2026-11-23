@@ -1,0 +1,94 @@
+# Common, profile-agnostic settings only. Datasource/JPA/Flyway config lives
+# in application-{windows-dev,prod}.yml. No H2/in-memory profile — XAMPP's
+# MySQL/MariaDB service must be running on localhost:3306 for local dev.
+#   windows-dev  -> DEFAULT. XAMPP's MariaDB on the developer's Windows
+#                   machine — persistent, real data across restarts.
+#   prod         -> MySQL on the Ubuntu server (opt in explicitly:
+#                   SPRING_PROFILES_ACTIVE=prod)
+server:
+  port: 8081
+  servlet:
+    context-path: /api/v1
+
+spring:
+  application:
+    name: wisenquire-backend
+  profiles:
+    active: windows-dev
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+  # Default is 1MB/file — WhatsApp media caps top out at 100MB (documents);
+  # this just needs to be no smaller than that, Meta enforces its own
+  # per-type limits on the send call itself.
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 101MB
+
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: 587
+    username: ${SMTP_USERNAME:demo.leadsystem@gmail.com}
+    password: ${SMTP_PASSWORD:REPLACE_WITH_REAL_APP_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+        connectiontimeout: 5000
+        timeout: 5000
+        writetimeout: 5000
+
+# App Security & JWT Settings
+app:
+  mail:
+    # Some providers (ZeptoMail, SendGrid, etc.) authenticate with an API-key
+    # style username (e.g. "emailapikey") that isn't a valid email address in
+    # its own right - the message's From header needs the actual verified
+    # sender address instead. Defaults to spring.mail.username so providers
+    # where username IS the sender address (Gmail) need no extra config.
+    from-address: ${MAIL_FROM_ADDRESS:${spring.mail.username}}
+  security:
+    jwt:
+      secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+      expiration-ms: 86400000 # 24 hours
+      refresh-expiration-ms: 604800000 # 7 days
+      issuer: leads-enterprise-system
+    otp:
+      length: 4
+      expiry-minutes: 5
+    # The one predefined login DataInitializer seeds on first boot, in every
+    # profile including prod (it's idempotent — skips once any user exists).
+    # Email is the login identity (no separate username). Override via env
+    # vars for anything beyond local dev; rotate the password before any
+    # real deployment.
+    super-admin:
+      email: ${SUPER_ADMIN_EMAIL:akhil@germanparts.ae}
+      password: ${SUPER_ADMIN_PASSWORD:Admin@123}
+
+# WhatsApp Business Cloud API Settings — per-branch/number credentials
+# (accessToken, phoneNumberId, appSecret, verifyToken) now live in the
+# whatsapp_configurations table, set up per branch from the frontend's
+# WhatsApp Setup page. Only two settings are genuinely global and stay here:
+whatsapp:
+  cloud-api:
+    # Meta's Graph API host/version — same for every branch/number, not tenant data.
+    base-url: https://graph.facebook.com/v20.0
+    # Fallback default used only by the initial webhook-subscription GET
+    # verification (Meta's webhook subscription is app-level, not per-number).
+    # Real per-branch verify tokens are checked first via WhatsAppConfiguration
+    # in the DB — see WhatsAppCloudService.verifyWebhookToken().
+    verify-token: ${WHATSAPP_VERIFY_TOKEN:LEAD_SYSTEM_SECURE_VERIFY_TOKEN_2026}
+
+# SpringDoc OpenAPI Documentation
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
