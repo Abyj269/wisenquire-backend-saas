@@ -121,6 +121,8 @@ public class TenantAccess {
         else if (value instanceof WhatsAppMessage x) record(WhatsAppConversation.class, x.getConversation().getId());
         else if (value instanceof WhatsAppConversation x) { company(x.getCompany().getId()); branch(x.getBranch().getId()); }
         else if (value instanceof WhatsAppConfiguration x) { company(x.getCompany().getId()); branch(x.getBranch().getId()); }
+        // F-1: a branch broadcast needs that branch; a company-wide one (no branch) needs company-wide scope.
+        else if (value instanceof Broadcast x) { company(x.getCompany().getId()); if (x.getBranch() != null) branch(x.getBranch().getId()); else companyWide(x.getCompany().getId()); }
         else if (value instanceof AiProviderConfig x) { company(x.getCompany().getId()); branch(x.getBranch().getId()); }
         else if (value instanceof AiBranchSettings x) branch(x.getBranch().getId());
         else if (value instanceof LeadConversionScore x) company(x.getCompany().getId());

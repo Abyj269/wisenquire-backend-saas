@@ -44,6 +44,7 @@ public class AiUsageGuardService {
     private final AiBranchSettingsService branchSettingsService;
     private final WhatsAppScheduleService scheduleService;
     private final BranchRepository branchRepo;
+    private final TenantAccess access;
 
     @Value
     public static class Reservation {
@@ -116,6 +117,7 @@ public class AiUsageGuardService {
 
     @Transactional(readOnly = true)
     public AiUsageSnapshotDto getUsageSnapshot(Long branchId) {
+        access.branch(branchId); // F-14: the caller must be allowed to see this branch
         Branch branch = branchRepo.findById(branchId)
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + branchId));
         AiBranchSettings settings = branchSettingsService.resolveEffective(branchId);
