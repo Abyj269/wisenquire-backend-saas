@@ -31,7 +31,8 @@ spring:
       leak-detection-threshold: 60000
 
   jpa:
-    database-platform: org.hibernate.dialect.MySQLDialect
+    # No explicit dialect: Hibernate 6 detects MySQL from the JDBC connection
+    # (an explicit MySQLDialect only triggers warning HHH90000025).
     hibernate:
       # Schema is owned by Flyway migrations, not Hibernate — this only
       # verifies entities match the DB, never issues CREATE/ALTER in prod.
@@ -56,6 +57,14 @@ app:
     otp:
       # The OTP must only ever reach the user by email in prod.
       expose-in-response: false
+
+# F-7 (plan Phase 0): no public API map in production. Swagger UI and the
+# OpenAPI JSON stay available in windows-dev.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 logging:
   level:

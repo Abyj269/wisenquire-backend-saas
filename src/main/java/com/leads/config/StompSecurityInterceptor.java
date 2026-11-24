@@ -31,7 +31,16 @@ public class StompSecurityInterceptor implements ChannelInterceptor {
         if(!principal.isEnabled() || tokens.getSessionVersion(token)!=user.getSessionVersion()) throw denied();
         return new UsernamePasswordAuthenticationToken(principal,null,principal.getAuthorities());
     }
+    /** Inbound frames only: logging/tenant context for the WebSocket thread handling this frame. */
+    private void enterContext(String token) { TenantContext.set(tokens.getContextClaims(token)); }
+    @Override public void afterSendCompletion(Message<?> message, MessageChannel channel, boolean sent, Exception ex) {
+        TenantContext.clear();
+    }
     @Override public Message<?> preSend(Message<?> message, MessageChannel channel) {
+        // afterSendCompletion is not called when preSend itself throws, so clear the context here on denial.
+        try { return checkInbound(message); } catch (RuntimeException ex) { TenantContext.clear(); throw ex; }
+    }
+    private Message<?> checkInbound(Message<?> message) {
         var h=MessageHeaderAccessor.getAccessor(message,StompHeaderAccessor.class);
         if(h==null) return message;
         if(h.getCommand()==StompCommand.DISCONNECT) { sessions.remove(h.getSessionId()); return message; }
@@ -39,10 +48,12 @@ public class StompSecurityInterceptor implements ChannelInterceptor {
             String header=h.getFirstNativeHeader("Authorization");
             String token=header!=null && header.startsWith("Bearer ") ? header.substring(7) : null;
             var auth=authenticate(token);
+            enterContext(token);
             if(sessions.size()>10000) throw denied();
             sessions.put(h.getSessionId(),token);h.setUser(auth);return message;
         }
         var auth=authenticate(sessions.get(h.getSessionId()));
+        enterContext(sessions.get(h.getSessionId()));
         if(h.getCommand()==StompCommand.SEND) throw denied();
         if(h.getCommand()==StompCommand.SUBSCRIBE) {
             var previous=SecurityContextHolder.getContext();
@@ -69,6 +80,7 @@ public class StompSecurityInterceptor implements ChannelInterceptor {
             @Override public Message<?> preSend(Message<?> message, MessageChannel channel) {
                 String id=(String) message.getHeaders().get("simpSessionId");
                 if(id!=null && sessions.containsKey(id)) {
+                    // Outbound sends often run on an HTTP request's thread: never touch TenantContext here.
                     try { authenticate(sessions.get(id)); } catch(RuntimeException ex) {sessions.remove(id);return null;}
                 } else if(id!=null) return null;
                 return message;

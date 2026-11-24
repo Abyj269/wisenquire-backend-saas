@@ -105,6 +105,23 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorBody("You don't have permission to do this."));
     }
 
+    /**
+     * No controller and no static resource matched the URL (Spring 6.1+ throws
+     * {@code NoResourceFoundException} from the resource handler; {@code NoHandlerFoundException}
+     * when no handler exists at all). Without these two, the {@link Exception} catch-all below
+     * turned every unknown path — e.g. /swagger-ui.html with springdoc off in prod — into a 500
+     * and an ERROR log line. Spring picks the most specific matching handler, so these win over
+     * the catch-all regardless of order. The body never echoes the requested path.
+     */
+    @ExceptionHandler({
+            org.springframework.web.servlet.resource.NoResourceFoundException.class,
+            org.springframework.web.servlet.NoHandlerFoundException.class
+    })
+    public ResponseEntity<Map<String, String>> handleNotFound(Exception ex) {
+        log.debug("No handler for request: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody("Not found."));
+    }
+
     /** Catch-all for anything not covered above — logs the real exception and returns a generic, safe message instead of leaking internal details. */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> handleUnexpected(Exception ex) {
