@@ -82,7 +82,7 @@ jobs:
             echo "SUPER_ADMIN_PASSWORD=$(openssl rand -hex 16)"
             echo "ADS_CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -base64 32)"
             echo "SMTP_USERNAME=ci@example.test"; echo "SMTP_PASSWORD=ci-smtp-placeholder"
-            echo "ALLOWED_ORIGINS=http://localhost:4200"
+            echo "ALLOWED_ORIGINS=https://ci.wisenquire.example"
           } > ci.env
       - name: Flyway pre-deploy step (MigrateMain)
         # --entrypoint is required: the image's ENTRYPOINT is "java -jar /app/app.jar", and
@@ -93,11 +93,14 @@ jobs:
             -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
             org.springframework.boot.loader.launch.PropertiesLauncher | tee migrate.log
           grep -E '^Flyway: [0-9]+ migration\(s\) applied; schema now at version [0-9]+' migrate.log
-      - name: Start app (Flyway off) and wait for readiness
+       -name: Start app (Flyway off) and wait for readiness
         run: |
           docker run -d --name api --network host --env-file ci.env wisenquire-backend:ci
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:9090/actuator/health/readiness | grep -q '"UP"'; then exit 0; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' api)" != "true" ]; then
+              echo "Container exited early"; docker logs api | tail -100; exit 1
+            fi
             sleep 3
           done
           docker logs api | tail -100; exit 1
