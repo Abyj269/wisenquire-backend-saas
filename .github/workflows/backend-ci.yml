@@ -93,7 +93,7 @@ jobs:
             -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
             org.springframework.boot.loader.launch.PropertiesLauncher | tee migrate.log
           grep -E '^Flyway: [0-9]+ migration\(s\) applied; schema now at version [0-9]+' migrate.log
-       -name: Start app (Flyway off) and wait for readiness
+      - name: Start app (Flyway off) and wait for readiness
         run: |
           docker run -d --name api --network host --env-file ci.env wisenquire-backend:ci
           for i in $(seq 1 60); do
