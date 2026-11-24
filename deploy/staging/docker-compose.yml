@@ -103,6 +103,9 @@ services:
         NG_CONFIGURATION: staging
     environment:
       API_UPSTREAM: api:8081
+      # Written into /assets/runtime-config.json at start-up (Step 3.4). Empty = Maps picker off.
+      # Use a staging-only key restricted by HTTP referrer to the staging origin.
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
     depends_on:
       api:
         condition: service_healthy

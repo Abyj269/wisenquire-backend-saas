@@ -32,5 +32,7 @@ S3_SECRET_KEY=$(rand_hex 20)
 S3_BUCKET=wisenquire-staging
 # Every seeded tenant user (personas) logs in with this password + the OTP from Mailpit.
 SEED_USER_PASSWORD=Staging-$(rand_hex 6)
+# Optional: a staging-only Maps browser key, restricted by HTTP referrer to the staging origin.
+GOOGLE_MAPS_API_KEY=
 EOF
 echo "Wrote $(pwd)/.env"

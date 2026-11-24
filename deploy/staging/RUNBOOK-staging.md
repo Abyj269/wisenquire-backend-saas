@@ -15,6 +15,8 @@ Plan Phase 0, Step 3.3; `docs/saas-modules/01-foundation.md` Part A item 4. Q5 (
 | `meta-mock` | `wiremock/wiremock:3.9.1` | Meta Graph API mock; every seeded WhatsApp config talks to it | 8089 (`/__admin/requests`) |
 | `mailpit` | `axllent/mailpit:v1.21` | Catches all email, including login OTPs | 8025 (web UI) |
 
+**Google Maps (optional):** set `GOOGLE_MAPS_API_KEY` in `.env` to a staging-only browser key restricted to `http://127.0.0.1:8180/*`, then `docker compose up -d frontend`. Empty = the delivery location picker is off. The frontend serves it as `/assets/runtime-config.json` (see `wse_leads_saas_frontend/docs/RUNTIME-CONFIG.md`).
+
 Ports are overridable in `.env` (`STAGING_HTTP_PORT`, `STAGING_DB_PORT`, `STAGING_MAIL_UI_PORT`, ...). The default app port is 8180 because 8080 is often taken by a local Tomcat/XAMPP.
 
 **MinIO** was planned for object storage, but MinIO no longer publishes container images (`minio/minio` and `minio/mc` are gone from Docker Hub and Quay), so staging uses SeaweedFS. Only S3 compatibility matters; the bucket is created with the standard AWS CLI.
