@@ -1,0 +1,9 @@
+{
+  "priority": 5,
+  "request": { "method": "GET", "urlPathPattern": "/v20.0/mock-media-[0-9]+" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "url": "http://meta-mock:8080/mock-media-file", "mime_type": "image/png", "file_size": 68 }
+  }
+}

@@ -1,0 +1,174 @@
+# WiseNquire SaaS staging (plan Phase 0, Step 3.3; 01-foundation Part A item 4).
+# Q5 (cloud) is not decided, so staging is this compose stack. Each service maps 1:1 to a
+# managed cloud service later (see RUNBOOK-staging.md, "Moving to a cloud").
+#
+#   scripts/init-env.sh   once: writes .env with random staging-only secrets
+#   scripts/up.sh         build images, migrate, start
+#   scripts/seed.sh       load the 20 synthetic tenants
+#
+# Every published port is bound to 127.0.0.1 only. Nothing here is a real credential.
+name: wisenquire-staging
+
+x-backend-env: &backend-env
+  DB_HOST: mysql
+  DB_PORT: "3306"
+  DB_NAME: ${DB_NAME}
+  DB_USERNAME: ${DB_USERNAME}
+  DB_PASSWORD: ${DB_PASSWORD}
+
+services:
+  mysql:
+    image: mysql:8.0
+    # Same server settings as production (docs/DATABASE_ARCHITECTURE.md).
+    command:
+      - --lower-case-table-names=1
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    # Published for the seed tool (runs on the host) and for inspection.
+    ports:
+      - "127.0.0.1:${STAGING_DB_PORT:-3307}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  # Flyway as a pre-deploy step (same as CI and production): the app itself starts with Flyway off.
+  migrate:
+    image: wisenquire-backend:staging
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["java", "-cp", "/app/app.jar", "-Dloader.main=com.leads.tools.MigrateMain",
+                 "org.springframework.boot.loader.launch.PropertiesLauncher"]
+    environment:
+      <<: *backend-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: wisenquire-backend:staging
+    environment:
+      <<: *backend-env
+      # The prod profile runs unchanged (Dockerfile); ProductionSafetyConfiguration checks these.
+      JWT_SECRET: ${JWT_SECRET}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+      ADS_CREDENTIALS_ENCRYPTION_KEY: ${ADS_CREDENTIALS_ENCRYPTION_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      # Mail goes to Mailpit, which catches the login OTPs (UI on :8025).
+      SMTP_HOST: mailpit
+      SPRING_MAIL_PORT: "1025"
+      SMTP_USERNAME: staging@wisenquire.invalid
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM_ADDRESS: no-reply@staging.wisenquire.invalid
+      # BYO WhatsApp (D8): every seeded config talks to the Meta mock, never graph.facebook.com.
+      WHATSAPP_CLOUDAPI_BASEURL: http://meta-mock:8080/v20.0
+      ADS_META_BASEURL: http://meta-mock:8080/v20.0
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+    volumes:
+      - media-cache:/app/whatsapp-media-cache
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+      meta-mock:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9090/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+    # Management port (health + Prometheus) for the host only; never publish it further.
+    ports:
+      - "127.0.0.1:${STAGING_MGMT_PORT:-19090}:9090"
+
+  frontend:
+    image: wisenquire-frontend:staging
+    build:
+      context: ${FRONTEND_DIR:-../../../wse_leads_saas_frontend}
+      args:
+        NG_CONFIGURATION: staging
+    environment:
+      API_UPSTREAM: api:8081
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${STAGING_HTTP_PORT:-8180}:8080"
+
+  # Object storage: S3-compatible SeaweedFS. (MinIO was planned, but MinIO no longer publishes
+  # container images: minio/minio and minio/mc are gone from Docker Hub and Quay.) No code uses
+  # it yet (media is on local disk, WhatsAppMediaService); the bucket is ready for the module
+  # that moves files to object storage. Cloud equivalent: S3 / GCS / Azure Blob.
+  object-storage:
+    image: chrislusf/seaweedfs:3.80
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /etc/seaweedfs
+        printf '{"identities":[{"name":"staging","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /etc/seaweedfs/s3.json
+        exec weed server -dir=/data -ip=object-storage -ip.bind=0.0.0.0 -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - object-data:/data
+    ports:
+      - "127.0.0.1:${STAGING_S3_PORT:-8333}:8333"
+
+  # Creates the bucket with a standard S3 client (proves S3 compatibility), then exits.
+  object-storage-init:
+    image: amazon/aws-cli:2.22.0
+    depends_on:
+      object-storage:
+        condition: service_started
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      S3_BUCKET: ${S3_BUCKET}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 40); do aws --endpoint-url http://object-storage:8333 s3 ls >/dev/null 2>&1 && break; sleep 2; done
+        aws --endpoint-url http://object-storage:8333 s3 mb "s3://$$S3_BUCKET" 2>&1 | grep -v BucketAlreadyOwnedByYou || true
+        aws --endpoint-url http://object-storage:8333 s3 ls "s3://$$S3_BUCKET" && echo "bucket $$S3_BUCKET ready"
+    restart: "no"
+
+  # Meta Graph API mock (WireMock). Mappings in ./meta-mock/mappings; request log at
+  # http://127.0.0.1:${STAGING_META_MOCK_PORT:-8089}/__admin/requests
+  meta-mock:
+    image: wiremock/wiremock:3.9.1
+    command: ["--port", "8080", "--disable-banner"]
+    volumes:
+      - ./meta-mock:/home/wiremock:ro
+    ports:
+      - "127.0.0.1:${STAGING_META_MOCK_PORT:-8089}:8080"
+
+  # Catches every outgoing email (login OTPs). UI: http://127.0.0.1:${STAGING_MAIL_UI_PORT:-8025}
+  mailpit:
+    image: axllent/mailpit:v1.21
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "5000"
+    ports:
+      - "127.0.0.1:${STAGING_MAIL_UI_PORT:-8025}:8025"
+
+volumes:
+  mysql-data:
+  object-data:
+  media-cache:

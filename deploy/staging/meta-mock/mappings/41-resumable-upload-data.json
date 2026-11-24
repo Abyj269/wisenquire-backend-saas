@@ -1,0 +1,9 @@
+{
+  "priority": 1,
+  "request": { "method": "POST", "urlPathPattern": "/v20.0/upload:.+" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "h": "mock-header-handle" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "priority": 100,
+  "request": { "method": "ANY", "urlPattern": "/v20.0/.*" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "success": true, "mock": "wiremock catch-all: add a specific mapping if the app depends on this response" }
+  }
+}

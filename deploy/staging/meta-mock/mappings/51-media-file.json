@@ -1,0 +1,9 @@
+{
+  "priority": 1,
+  "request": { "method": "GET", "urlPath": "/mock-media-file" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "image/png" },
+    "base64Body": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+  }
+}

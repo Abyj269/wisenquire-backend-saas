@@ -90,8 +90,21 @@ jobs:
         options: >-
           --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-root-pw"
           --health-interval=5s --health-timeout=5s --health-retries=30
+      # Catches the login OTP email for the seeded-persona login check (Step 3.3).
+      mailpit:
+        image: axllent/mailpit:v1.21
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: "1"
+          MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+        ports: ["1025:1025", "8025:8025"]
     steps:
       - uses: actions/checkout@v4
+      # JDK + Maven for the seed generator (test-scope code, run on the runner, never in the image).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
       - uses: actions/download-artifact@v4
         with:
           name: saas-jar
@@ -114,6 +127,8 @@ jobs:
             echo "ADS_CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -base64 32)"
             echo "SMTP_USERNAME=ci@example.test"; echo "SMTP_PASSWORD=ci-smtp-placeholder"
             echo "ALLOWED_ORIGINS=https://ci.wisenquire.example"
+            echo "SMTP_HOST=127.0.0.1"; echo "SPRING_MAIL_PORT=1025"
+            echo "SEED_USER_PASSWORD=Ci-$(openssl rand -hex 8)"
           } > ci.env
       - name: Flyway pre-deploy step (MigrateMain)
         # --entrypoint is required: the image's ENTRYPOINT is "java -jar /app/app.jar", and
@@ -124,6 +139,12 @@ jobs:
             -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
             org.springframework.boot.loader.launch.PropertiesLauncher | tee migrate.log
           grep -E '^Flyway: [0-9]+ migration\(s\) applied; schema now at version [0-9]+' migrate.log
+      - name: Seed synthetic tenants, tiny scale (seed/schema drift check, Step 3.3)
+        run: |
+          set -a; . ./ci.env; set +a
+          export SEED_TARGET=staging MAVEN_OPTS="-Duser.timezone=Asia/Dubai"
+          mvn -B -q test-compile org.codehaus.mojo:exec-maven-plugin:3.5.0:java -Dmaven.compiler.release=17             -Dexec.mainClass=com.leads.tools.seed.StagingSeed -Dexec.classpathScope=test             -Dexec.args="--scale=ci --personas=target/personas.csv" | tee seed.log
+          grep -E '^Seed done \(scale=ci\): 8 tenants' seed.log
       - name: Start app (Flyway off) and wait for readiness
         run: |
           docker run -d --name api --network host --env-file ci.env wisenquire-backend:ci
@@ -148,6 +169,18 @@ jobs:
           # Trace id is echoed back.
           curl -s -D - -o /dev/null -H 'X-Request-Id: ci-trace-12345' http://127.0.0.1:8081/api/v1/leads \
             | grep -qi '^X-Request-Id: ci-trace-12345'
+      - name: Seeded persona logs in (password + OTP via Mailpit) and sees its own leads only
+        run: |
+          set -a; . ./ci.env; set +a
+          q() { mysql -h127.0.0.1 -P3306 -uwisenquire -pci-app-pw wisenquire_ci -N -e "$1" 2>/dev/null; }
+          C1=$(q "SELECT id FROM companies WHERE code='STG-T01-C1'"); B1=$(q "SELECT id FROM branches WHERE code='STG-T01-C1B1'")
+          B2=$(q "SELECT id FROM branches WHERE code='STG-T01-C1B2'"); X=$(q "SELECT id FROM companies WHERE code='STG-T02-C1'")
+          T=$(python3 deploy/staging/scripts/otp_login.py --base http://127.0.0.1:8081/api/v1 --mail http://127.0.0.1:8025                 --email agent1.c1b1@t01.staging.test --password "$SEED_USER_PASSWORD")
+          code() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $T" "http://127.0.0.1:8081/api/v1$1"; }
+          test "$(code "/leads?companyId=$C1&branchId=$B1&size=1")" = 200
+          test "$(code "/leads?companyId=$C1&branchId=$B2&size=1")" = 403
+          test "$(code "/leads?companyId=$X&size=1")" = 403
+          echo "seeded persona: own branch 200, other branch 403, other tenant 403"
       - name: App logs (on failure)
         if: failure()
         run: docker logs api | tail -200 || true

@@ -1,0 +1,31 @@
+{
+  "priority": 1,
+  "request": { "method": "GET", "urlPathPattern": "/v20.0/[^/]+/message_templates" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "data": [
+        {
+          "id": "mock-tpl-hello-world",
+          "name": "hello_world",
+          "status": "APPROVED",
+          "category": "UTILITY",
+          "language": "en_US",
+          "parameter_format": "POSITIONAL",
+          "components": [ { "type": "BODY", "text": "Hello from WiseNquire staging." } ]
+        },
+        {
+          "id": "mock-tpl-follow-up",
+          "name": "follow_up",
+          "status": "APPROVED",
+          "category": "MARKETING",
+          "language": "en_US",
+          "parameter_format": "POSITIONAL",
+          "components": [ { "type": "BODY", "text": "Hi, just following up on your enquiry." } ]
+        }
+      ],
+      "paging": { "cursors": { "before": "", "after": "" } }
+    }
+  }
+}
