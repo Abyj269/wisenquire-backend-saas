@@ -4,7 +4,9 @@
 #               pre-deploy step against MySQL 8, starts the app and probes it.
 # - secret-scan: gitleaks, report-only in Phase 0 (known committed dev defaults
 #               are tracked in the plan; flip to blocking once they are rotated).
-# Integration tests / isolation matrix / architecture test jobs come in Step 3.2.
+# - integration: Testcontainers MySQL 8 integration tests, the isolation matrix and the
+#               endpoint-coverage gate (a new endpoint without matrix rows fails), plus the
+#               ArchUnit report (report mode: never fails). Step 3.2.
 name: backend-ci
 
 on:
@@ -42,6 +44,35 @@ jobs:
         with:
           name: saas-jar
           path: target/wisenquire-saas.jar
+          retention-days: 14
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      # verify = unit tests (incl. ArchitectureReportTest) + *IT via failsafe. Docker is on the runner.
+      - name: Integration tests, isolation matrix, coverage gate, architecture report
+        run: mvn -B verify -Dmaven.compiler.release=17
+      - name: Summary
+        if: always()
+        run: |
+          for f in target/isolation-matrix/coverage.txt target/isolation-matrix/results.txt target/architecture/violations.txt; do
+            [ -f "$f" ] && { echo "== $f"; head -1 "$f"; } || echo "== $f missing"
+          done
+          [ -f target/isolation-matrix/results.txt ] && grep -E '^(FAIL|KNOWN-LEAK)' target/isolation-matrix/results.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolation-and-architecture-reports
+          path: |
+            target/isolation-matrix/
+            target/architecture/
+            target/failsafe-reports/
           retention-days: 14
 
   container:

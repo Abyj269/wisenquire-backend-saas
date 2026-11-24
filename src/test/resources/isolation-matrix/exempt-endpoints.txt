@@ -1,0 +1,7 @@
+# Public endpoints with no tenant scope: no isolation-matrix rows. Every line needs a reason.
+# Format: METHOD /path  # reason
+# Adding a line here is a security decision: say why the endpoint needs no tenant check.
+POST /auth/login  # public by design: credentials in, OTP challenge out; no tenant data (module 02)
+POST /auth/verify-otp  # public by design: completes login; no tenant data (module 02)
+GET /whatsapp/webhook  # public by design: Meta verify-token handshake, matched by verify token (module 12)
+POST /whatsapp/webhook  # public by design: Meta delivery, authenticated by X-Hub-Signature-256 per app secret (module 12)

@@ -62,3 +62,11 @@ CI runs both checks on every push (`.github/workflows/backend-ci.yml`, job `cont
 
 ## 7. Rollback
 Redeploy the previous image tag. Migrations are additive (expand/contract), so the previous image runs against the migrated schema.
+
+## 8. Integration tests, isolation matrix, architecture report (Step 3.2)
+- **Run locally:** Docker Desktop must be running. `mvn -B clean verify -Dmaven.compiler.release=17`. Testcontainers pulls `mysql:8.0` once, starts it with the prod server settings (`lower_case_table_names=1`, utf8mb4), and Flyway applies every migration. Ryuk removes the container when the JVM exits.
+- **CI:** job `integration` in `.github/workflows/backend-ci.yml`. Artifact `isolation-and-architecture-reports` holds `target/isolation-matrix/` (results.txt, coverage.txt, unlisted.txt), `target/architecture/violations.txt` and the failsafe reports.
+- **A red `EndpointCoverageIT`** means an endpoint was added (or renamed) without matrix rows. Add rows to that module's `*Rows` class under `src/test/java/com/leads/it/matrix`. Do not add it to `pending-endpoints.txt`: that list may only shrink (`PENDING_CEILING`).
+- **A red `IsolationMatrixIT` X-* row** is a possible cross-tenant leak. Treat it as a security incident until proven otherwise; do not change the expectation to make it pass.
+- **When D12 lands** (01 Part B item 3), change `Outcome.DENIED` from 403 to 404 in one place.
+- **Testcontainers version** is pinned in `pom.xml` (`testcontainers.version`): Boot 3.3.2's default 1.19.8 is older than Docker Engine 29's minimum API version.

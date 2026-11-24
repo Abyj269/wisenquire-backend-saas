@@ -35,6 +35,10 @@
         <!-- Overridden only by the saas-jar profile. -->
         <packaging.type>war</packaging.type>
         <tomcat.scope>provided</tomcat.scope>
+        <!-- Test-only. Boot 3.3.2 manages Testcontainers 1.19.8, whose Docker client API
+             version is rejected by Docker Engine 29+ (minimum API 1.44). -->
+        <testcontainers.version>1.21.4</testcontainers.version>
+        <archunit.version>1.4.1</archunit.version>
     </properties>
 
     <dependencies>
@@ -197,6 +201,29 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Integration harness + isolation matrix (01 Part A item 6): MySQL 8 in Docker. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Architecture test (01 Part A item 7), report mode. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -226,6 +253,20 @@
                 <configuration>
                     <failOnMissingWebXml>false</failOnMissingWebXml>
                 </configuration>
+            </plugin>
+            <!-- *IT classes (Testcontainers, needs Docker) run in `mvn verify` only;
+                 `mvn test` / `mvn package` stay unit-only and Docker-free. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
