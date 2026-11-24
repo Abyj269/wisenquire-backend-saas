@@ -57,6 +57,14 @@ app:
       # The OTP must only ever reach the user by email in prod.
       expose-in-response: false
 
+# F-7 (plan Phase 0): no public API map in production. Swagger UI and the
+# OpenAPI JSON stay available in windows-dev.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 logging:
   level:
     root: WARN

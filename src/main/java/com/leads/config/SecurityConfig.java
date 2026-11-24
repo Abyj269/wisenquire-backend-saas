@@ -28,6 +28,9 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    @org.springframework.beans.factory.annotation.Value("${management.server.port:-1}")
+    private int managementPort;
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -73,13 +76,21 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/auth/login", "/api/v1/auth/login",
                                 "/auth/verify-otp", "/api/v1/auth/verify-otp",
-                                "/auth/refresh", "/api/v1/auth/refresh",
+                                // "/auth/refresh" removed (F-7): no such endpoint exists until module 02 adds it.
                                 "/whatsapp/webhook", "/api/v1/whatsapp/webhook",
+                                // Liveness/readiness probes (Actuator). Only "health" is exposed by
+                                // default (application.yml), and it shows no details.
+                                "/actuator/health", "/actuator/health/**",
+                                "/api/v1/actuator/health", "/api/v1/actuator/health/**",
                                 "/swagger-ui/**", "/api/v1/swagger-ui/**",
                                 "/swagger-ui.html", "/api/v1/swagger-ui.html",
                                 "/v3/api-docs/**", "/api/v1/v3/api-docs/**",
                                 "/ws/**", "/api/v1/ws/**"
                         ).permitAll()
+                        // Container only: the separate management port (management.server.port,
+                        // e.g. 9090) serves health + Prometheus metrics to the internal scraper.
+                        // That port must never be published to the internet. Off (-1) for the WAR.
+                        .requestMatchers(request -> managementPort > 0 && request.getLocalPort() == managementPort).permitAll()
                         // Any other request must be authenticated
                         .anyRequest().authenticated()
                 );

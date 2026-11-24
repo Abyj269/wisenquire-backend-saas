@@ -20,6 +20,13 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  # Plan Phase 0: Hibernate statistics feed the Phase 0.5 baseline (queries per
+  # request). Off by default; staging turns it on with HIBERNATE_STATISTICS=true.
+  jpa:
+    properties:
+      hibernate:
+        generate_statistics: ${HIBERNATE_STATISTICS:false}
+
   # Default is 1MB/file — WhatsApp media caps top out at 100MB (documents);
   # this just needs to be no smaller than that, Meta enforces its own
   # per-type limits on the send call itself.
@@ -83,6 +90,30 @@ whatsapp:
     # Real per-branch verify tokens are checked first via WhatsAppConfiguration
     # in the DB — see WhatsAppCloudService.verifyWebhookToken().
     verify-token: ${WHATSAPP_VERIFY_TOKEN:LEAD_SYSTEM_SECURE_VERIFY_TOKEN_2026}
+
+# Actuator (plan Phase 0, D10). Default for every deployment, including the
+# live WAR: only "health" is exposed, without details, at
+# <context>/api/v1/actuator/health (+ /liveness, /readiness). Everything else
+# under /actuator is closed (SecurityConfig). The container (Dockerfile)
+# additionally sets MANAGEMENT_SERVER_PORT=9090 and exposes "prometheus" there,
+# on an internal-only port.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+  health:
+    # An SMTP outage must not mark the whole app unhealthy.
+    mail:
+      enabled: false
 
 # SpringDoc OpenAPI Documentation
 springdoc:

@@ -12,7 +12,10 @@
     <groupId>com.leads</groupId>
     <artifactId>wisenquire-backend</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <packaging>war</packaging>
+    <!-- Default build is unchanged: a WAR for the external Tomcat (the live
+         wiseNquire_saas_live deployment). The saas-jar profile below switches
+         packaging to an executable JAR for the container (plan D10). -->
+    <packaging>${packaging.type}</packaging>
     <name>wisenquire-backend</name>
     <description>WiseNquire - Enterprise Multi-Tenant Lead Management System with WhatsApp Cloud API</description>
 
@@ -29,6 +32,9 @@
              `mvn clean package`); override per client with
              `-Dapp.war.name=<client>_crm_live` - see scripts/clients/README.md. -->
         <app.war.name>astra_crm_live</app.war.name>
+        <!-- Overridden only by the saas-jar profile. -->
+        <packaging.type>war</packaging.type>
+        <tomcat.scope>provided</tomcat.scope>
     </properties>
 
     <dependencies>
@@ -90,7 +96,24 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-tomcat</artifactId>
-            <scope>provided</scope>
+            <scope>${tomcat.scope}</scope>
+        </dependency>
+
+        <!-- Health/readiness probes and metrics (plan Phase 0, D10). Only
+             /actuator/health/** is public; see SecurityConfig. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- Publishes Hibernate statistics as metrics when
+             hibernate.generate_statistics is on (staging only). -->
+        <dependency>
+            <groupId>org.hibernate.orm</groupId>
+            <artifactId>hibernate-micrometer</artifactId>
         </dependency>
 
         <!-- Database Driver -->
@@ -196,4 +219,18 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Executable JAR for the container image:
+             mvn -B clean package -Psaas-jar  ->  target/wisenquire-saas.jar
+             Tomcat is embedded (compile scope) instead of provided. -->
+        <profile>
+            <id>saas-jar</id>
+            <properties>
+                <packaging.type>jar</packaging.type>
+                <tomcat.scope>compile</tomcat.scope>
+                <app.war.name>wisenquire-saas</app.war.name>
+            </properties>
+        </profile>
+    </profiles>
 </project>

@@ -66,6 +66,17 @@ public class JwtTokenProvider {
         return value == null ? -1 : value.longValue();
     }
 
+    /** The tenant claims of an already-validated token, for {@link TenantContext} (logging only; never for authorisation). */
+    public TenantContext.Data getContextClaims(String token) {
+        Claims claims = Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
+        Number userId = claims.get("userId", Number.class);
+        Number organizationId = claims.get("organizationId", Number.class);
+        return new TenantContext.Data(
+                userId == null ? null : userId.longValue(),
+                organizationId == null ? null : organizationId.longValue(),
+                claims.get("roleLevel", String.class));
+    }
+
     public boolean validateToken(String authToken) {
         try {
             Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(authToken);

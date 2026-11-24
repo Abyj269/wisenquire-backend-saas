@@ -1,0 +1,126 @@
+# Backend CI (plan Phase 0, Step 3.1).
+# - build-test: unit tests + the live WAR (wiseNquire_saas_live) + the saas-jar.
+# - container:  builds the image, checks the timezone (R20), runs the Flyway
+#               pre-deploy step against MySQL 8, starts the app and probes it.
+# - secret-scan: gitleaks, report-only in Phase 0 (known committed dev defaults
+#               are tracked in the plan; flip to blocking once they are rotated).
+# Integration tests / isolation matrix / architecture test jobs come in Step 3.2.
+name: backend-ci
+
+on:
+  push:
+    branches: [main, "saas/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Unit tests + live WAR (default profile, unchanged)
+        run: mvn -B clean package -Dapp.war.name=wiseNquire_saas_live -Dmaven.compiler.release=17
+      - name: Check the WAR keeps Tomcat as provided
+        run: |
+          unzip -Z1 target/wiseNquire_saas_live.war | grep -q '^WEB-INF/lib-provided/tomcat-embed-core'
+          ! unzip -Z1 target/wiseNquire_saas_live.war | grep -q '^WEB-INF/lib/tomcat-embed-core'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: war-wiseNquire_saas_live
+          path: target/wiseNquire_saas_live.war
+          retention-days: 14
+      - name: saas-jar (executable JAR for the container)
+        run: mvn -B -DskipTests package -Psaas-jar -Dmaven.compiler.release=17
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saas-jar
+          path: target/wisenquire-saas.jar
+          retention-days: 14
+
+  container:
+    needs: build-test
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-pw
+          MYSQL_DATABASE: wisenquire_ci
+          MYSQL_USER: wisenquire
+          MYSQL_PASSWORD: ci-app-pw
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-root-pw"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: saas-jar
+          path: target
+      - name: Build image
+        run: docker build -t wisenquire-backend:ci .
+      - name: Timezone is Asia/Dubai inside the container (R20)
+        run: |
+          test "$(docker run --rm --entrypoint date wisenquire-backend:ci +%z)" = "+0400"
+          docker run --rm --entrypoint java wisenquire-backend:ci -XshowSettings:properties -version 2>&1 \
+            | grep -E '^\s*user\.timezone = Asia/Dubai$'
+      - name: CI-only secrets (random, never real)
+        run: |
+          {
+            echo "DB_HOST=127.0.0.1"; echo "DB_PORT=3306"; echo "DB_NAME=wisenquire_ci"
+            echo "DB_USERNAME=wisenquire"; echo "DB_PASSWORD=ci-app-pw"
+            echo "JWT_SECRET=$(openssl rand -hex 48)"
+            echo "SUPER_ADMIN_EMAIL=ci-admin@example.test"
+            echo "SUPER_ADMIN_PASSWORD=$(openssl rand -hex 16)"
+            echo "ADS_CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -base64 32)"
+            echo "SMTP_USERNAME=ci@example.test"; echo "SMTP_PASSWORD=ci-smtp-placeholder"
+            echo "ALLOWED_ORIGINS=http://localhost:4200"
+          } > ci.env
+      - name: Flyway pre-deploy step (MigrateMain)
+        run: |
+          docker run --rm --network host --env-file ci.env wisenquire-backend:ci \
+            java -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
+            org.springframework.boot.loader.launch.PropertiesLauncher
+      - name: Start app (Flyway off) and wait for readiness
+        run: |
+          docker run -d --name api --network host --env-file ci.env wisenquire-backend:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9090/actuator/health/readiness | grep -q '"UP"'; then exit 0; fi
+            sleep 3
+          done
+          docker logs api | tail -100; exit 1
+      - name: Probe and security checks
+        run: |
+          curl -fsS http://127.0.0.1:9090/actuator/health/liveness | grep -q '"UP"'
+          # With a separate management port, health is served only on 9090 (the WAR serves it at /api/v1/actuator/health).
+          curl -fsS http://127.0.0.1:9090/actuator/prometheus | grep -q '^jvm_memory_used_bytes'
+          # Closed on the public port: metrics, Swagger (off in prod), the old /auth/refresh whitelist.
+          for path in /api/v1/actuator/prometheus /api/v1/swagger-ui.html /api/v1/v3/api-docs /api/v1/auth/refresh; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8081$path")
+            echo "$path -> $code"; case "$code" in 401|403|404) ;; *) exit 1;; esac
+          done
+          # Trace id is echoed back.
+          curl -s -D - -o /dev/null -H 'X-Request-Id: ci-trace-12345' http://127.0.0.1:8081/api/v1/leads \
+            | grep -qi '^X-Request-Id: ci-trace-12345'
+      - name: App logs (on failure)
+        if: failure()
+        run: docker logs api | tail -200 || true
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # report-only in Phase 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
