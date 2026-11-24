@@ -85,10 +85,14 @@ jobs:
             echo "ALLOWED_ORIGINS=http://localhost:4200"
           } > ci.env
       - name: Flyway pre-deploy step (MigrateMain)
+        # --entrypoint is required: the image's ENTRYPOINT is "java -jar /app/app.jar", and
+        # arguments after the image name are only appended to it (that started the app, with
+        # Flyway off, against the empty DB -> "missing table [ad_account_connections]").
         run: |
-          docker run --rm --network host --env-file ci.env wisenquire-backend:ci \
-            java -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
-            org.springframework.boot.loader.launch.PropertiesLauncher
+          docker run --rm --network host --env-file ci.env --entrypoint java wisenquire-backend:ci \
+            -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
+            org.springframework.boot.loader.launch.PropertiesLauncher | tee migrate.log
+          grep -E '^Flyway: [0-9]+ migration\(s\) applied; schema now at version [0-9]+' migrate.log
       - name: Start app (Flyway off) and wait for readiness
         run: |
           docker run -d --name api --network host --env-file ci.env wisenquire-backend:ci

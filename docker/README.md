@@ -30,10 +30,11 @@ Optional:
 ## 3. Migrate first (pre-deploy step)
 App containers run with `SPRING_FLYWAY_ENABLED=false`. Run Flyway once per release **before** starting or rolling the app containers:
 ```
-docker run --rm --env-file prod.env wisenquire-backend:<tag> \
-  java -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
+docker run --rm --env-file prod.env --entrypoint java wisenquire-backend:<tag> \
+  -cp /app/app.jar -Dloader.main=com.leads.tools.MigrateMain \
   org.springframework.boot.loader.launch.PropertiesLauncher
 ```
+- `--entrypoint java` is required. Without it, the arguments are appended to the image's `java -jar /app/app.jar`, which starts the **app** with Flyway off instead of migrating. The app then fails with `Schema-validation: missing table …`.
 - It exits 0 on success and prints the schema version.
 - It uses only the DB variables. `DB_URL` overrides the built URL.
 

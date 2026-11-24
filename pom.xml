@@ -88,6 +88,16 @@
             <groupId>io.github.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-pdfbox</artifactId>
             <version>1.1.40</version>
+            <!-- pdfbox pulls commons-logging, which clashes with Spring's own
+                 spring-jcl (same org.apache.commons.logging API). Spring logs a
+                 "spring-jcl / commons-logging.jar conflict" warning at start-up;
+                 excluding it routes pdfbox logging through spring-jcl to SLF4J. -->
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Provided by the external Tomcat 10.1 container in prod (WAR

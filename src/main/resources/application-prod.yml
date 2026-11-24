@@ -31,7 +31,8 @@ spring:
       leak-detection-threshold: 60000
 
   jpa:
-    database-platform: org.hibernate.dialect.MySQLDialect
+    # No explicit dialect: Hibernate 6 detects MySQL from the JDBC connection
+    # (an explicit MySQLDialect only triggers warning HHH90000025).
     hibernate:
       # Schema is owned by Flyway migrations, not Hibernate — this only
       # verifies entities match the DB, never issues CREATE/ALTER in prod.
