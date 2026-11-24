@@ -31,6 +31,24 @@ public class SecurityConfig {
     @org.springframework.beans.factory.annotation.Value("${management.server.port:-1}")
     private int managementPort;
 
+    // Same properties (and springdoc's own defaults) that switch the endpoints on/off.
+    @org.springframework.beans.factory.annotation.Value("${springdoc.swagger-ui.enabled:true}")
+    private boolean swaggerUiEnabled;
+
+    @org.springframework.beans.factory.annotation.Value("${springdoc.api-docs.enabled:true}")
+    private boolean apiDocsEnabled;
+
+    private static final org.springframework.util.AntPathMatcher PATHS = new org.springframework.util.AntPathMatcher();
+
+    /** Matches the path inside the servlet context, the same view the string matchers above use. */
+    private static boolean matchesAny(jakarta.servlet.http.HttpServletRequest request, String... patterns) {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        for (String p : patterns) {
+            if (PATHS.match(p, path)) return true;
+        }
+        return false;
+    }
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -82,11 +100,17 @@ public class SecurityConfig {
                                 // default (application.yml), and it shows no details.
                                 "/actuator/health", "/actuator/health/**",
                                 "/api/v1/actuator/health", "/api/v1/actuator/health/**",
-                                "/swagger-ui/**", "/api/v1/swagger-ui/**",
-                                "/swagger-ui.html", "/api/v1/swagger-ui.html",
-                                "/v3/api-docs/**", "/api/v1/v3/api-docs/**",
                                 "/ws/**", "/api/v1/ws/**"
                         ).permitAll()
+                        // F-7: the API map is public only where springdoc is on (windows-dev).
+                        // With it off (prod), these paths fall to anyRequest().authenticated()
+                        // and an anonymous caller gets 401 instead of reaching MVC at all.
+                        .requestMatchers(request -> swaggerUiEnabled && matchesAny(request,
+                                "/swagger-ui/**", "/api/v1/swagger-ui/**",
+                                "/swagger-ui.html", "/api/v1/swagger-ui.html")).permitAll()
+                        .requestMatchers(request -> apiDocsEnabled && matchesAny(request,
+                                "/v3/api-docs", "/v3/api-docs/**",
+                                "/api/v1/v3/api-docs", "/api/v1/v3/api-docs/**")).permitAll()
                         // Container only: the separate management port (management.server.port,
                         // e.g. 9090) serves health + Prometheus metrics to the internal scraper.
                         // That port must never be published to the internet. Off (-1) for the WAR.
