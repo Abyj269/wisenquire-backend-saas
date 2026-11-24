@@ -22,23 +22,28 @@ public class StompSecurityInterceptor implements ChannelInterceptor {
     private final UserRepository users;
     private final TenantAccess access;
     private final Map<String,String> sessions = new ConcurrentHashMap<>();
+    @org.springframework.beans.factory.annotation.Value("${app.tenant.actor-memo.enabled:true}")
+    private boolean memoEnabled = true;
 
     public UsernamePasswordAuthenticationToken authenticate(String token) {
         if(token==null || !tokens.validateToken(token)) throw denied();
         String email=tokens.getEmailFromToken(token);
-        var principal=details.loadUserByUsername(email);
-        var user=users.findByEmail(email).orElseThrow(StompSecurityInterceptor::denied);
+        // One identity query per frame (01 Part B item 1); memoised for TenantAccess, cleared after the frame.
+        var user=users.findForAuthenticationByEmail(email).orElseThrow(StompSecurityInterceptor::denied);
+        var principal=details.toUserDetails(user);
         if(!principal.isEnabled() || tokens.getSessionVersion(token)!=user.getSessionVersion()) throw denied();
+        if(memoEnabled) com.leads.service.ActorMemo.put(email,user);
         return new UsernamePasswordAuthenticationToken(principal,null,principal.getAuthorities());
     }
     /** Inbound frames only: logging/tenant context for the WebSocket thread handling this frame. */
     private void enterContext(String token) { TenantContext.set(tokens.getContextClaims(token)); }
     @Override public void afterSendCompletion(Message<?> message, MessageChannel channel, boolean sent, Exception ex) {
         TenantContext.clear();
+        com.leads.service.ActorMemo.clear();
     }
     @Override public Message<?> preSend(Message<?> message, MessageChannel channel) {
         // afterSendCompletion is not called when preSend itself throws, so clear the context here on denial.
-        try { return checkInbound(message); } catch (RuntimeException ex) { TenantContext.clear(); throw ex; }
+        try { return checkInbound(message); } catch (RuntimeException ex) { TenantContext.clear(); com.leads.service.ActorMemo.clear(); throw ex; }
     }
     private Message<?> checkInbound(Message<?> message) {
         var h=MessageHeaderAccessor.getAccessor(message,StompHeaderAccessor.class);

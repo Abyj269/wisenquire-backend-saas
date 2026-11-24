@@ -13,6 +13,39 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class OpenApiConfig {
 
+    /**
+     * D12: every operation documents its error responses as ErrorResponse. (springdoc drops
+     * component schemas nothing references, so the reference is what keeps them in the spec.)
+     */
+    @Bean
+    public org.springdoc.core.customizers.GlobalOpenApiCustomizer errorResponseCustomizer() {
+        return openApi -> {
+            if (openApi.getComponents() == null) openApi.setComponents(new Components());
+            // The error body and its closed code list: an API contract, so changing it is versioned.
+            openApi.getComponents()
+                    .addSchemas("ErrorCode", new io.swagger.v3.oas.models.media.StringSchema()
+                            ._enum(java.util.Arrays.stream(com.leads.exception.ErrorCode.values()).map(Enum::name).toList())
+                            .description("D12 error code. The frontend maps by code, never by message."))
+                    .addSchemas("ErrorResponse", new io.swagger.v3.oas.models.media.ObjectSchema()
+                            .description("Every error response (D12). `message` is kept for older clients.")
+                            .addProperty("code", new io.swagger.v3.oas.models.media.Schema<String>().$ref("#/components/schemas/ErrorCode"))
+                            .addProperty("message", new io.swagger.v3.oas.models.media.StringSchema())
+                            .addProperty("details", new io.swagger.v3.oas.models.media.ObjectSchema())
+                            .addProperty("traceId", new io.swagger.v3.oas.models.media.StringSchema())
+                            .required(java.util.List.of("code", "message", "details")));
+            if (openApi.getPaths() == null) return;
+            var ref = new io.swagger.v3.oas.models.media.Schema<Object>().$ref("#/components/schemas/ErrorResponse");
+            var content = new io.swagger.v3.oas.models.media.Content().addMediaType("application/json",
+                    new io.swagger.v3.oas.models.media.MediaType().schema(ref));
+            openApi.getPaths().values().forEach(item -> item.readOperations().forEach(op -> {
+                if (op.getResponses() == null) op.setResponses(new io.swagger.v3.oas.models.responses.ApiResponses());
+                op.getResponses().addApiResponse("default", new io.swagger.v3.oas.models.responses.ApiResponse()
+                        .description("Error (D12): see ErrorCode for the closed list of codes").content(content));
+            }));
+        };
+    }
+
+
     @Bean
     public OpenAPI customOpenAPI() {
         final String securitySchemeName = "bearerAuth";

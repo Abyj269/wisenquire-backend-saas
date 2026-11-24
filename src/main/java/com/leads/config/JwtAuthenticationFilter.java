@@ -24,6 +24,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final CustomUserDetailsService customUserDetailsService;
     private final com.leads.repository.UserRepository users;
 
+    /** Request attribute: the token's session version is stale (D12 SESSION_REVOKED in the 401 body). */
+    public static final String SESSION_REVOKED_ATTRIBUTE = "auth.sessionRevoked";
+
+    @org.springframework.beans.factory.annotation.Value("${app.tenant.actor-memo.enabled:true}")
+    private boolean memoEnabled = true;
+
     @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
@@ -36,9 +42,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
                 String email = tokenProvider.getEmailFromToken(jwt);
 
-                UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
-                var user = users.findByEmail(email).orElseThrow();
-                if (userDetails.isEnabled() && tokenProvider.getSessionVersion(jwt) == user.getSessionVersion()) {
+                // One identity query per request (01 Part B item 1): the same user builds the
+                // principal and is memoised for TenantAccess.actor().
+                var user = users.findForAuthenticationByEmail(email).orElseThrow();
+                UserDetails userDetails = customUserDetailsService.toUserDetails(user);
+                boolean sessionCurrent = tokenProvider.getSessionVersion(jwt) == user.getSessionVersion();
+                if (!sessionCurrent) request.setAttribute(SESSION_REVOKED_ATTRIBUTE, Boolean.TRUE);
+                if (userDetails.isEnabled() && sessionCurrent) {
+                    if (memoEnabled) com.leads.service.ActorMemo.put(email, user);
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         userDetails,
                         null,

@@ -19,6 +19,10 @@ public class TenantAccess {
     private final EntityManager em;
     private final UserRepository users;
     private final com.leads.repository.LeadRepository leads;
+    private final TenantStatusPolicy statusPolicy;
+    /** 01 Part B item 1 kill switch: false = never read the memo (every actor() queries again). */
+    @org.springframework.beans.factory.annotation.Value("${app.tenant.actor-memo.enabled:true}")
+    private boolean memoEnabled = true;
     private static final ThreadLocal<Long> SYSTEM_COMPANY = new ThreadLocal<>();
 
     // Only verified webhook/job code in this package may enter a bounded system scope.
@@ -30,20 +34,23 @@ public class TenantAccess {
 
     public User actor() {
         var auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) throw denied();
-        User user = users.findByEmail(auth.getName()).orElseThrow(TenantAccess::denied);
-        if (!Boolean.TRUE.equals(user.getIsActive())) throw denied();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) throw forbidden();
+        // Read-only here: only the JWT filter / STOMP interceptor fill the memo (and they clear it),
+        // so a pooled async thread can never see another request's user.
+        User user = memoEnabled ? ActorMemo.get(auth.getName()) : null;
+        if (user == null) user = users.findByEmail(auth.getName()).orElseThrow(TenantAccess::denied);
+        if (!Boolean.TRUE.equals(user.getIsActive())) throw forbidden();
         return user;
     }
     public boolean isSuper(User user) {
         return Boolean.TRUE.equals(user.getIsSuperAdmin()) || user.getRole().getRoleLevel() == RoleLevel.SUPER_ADMIN;
     }
-    public void superAdmin() { if (!isSuper(actor())) throw denied(); }
+    public void superAdmin() { if (!isSuper(actor())) throw forbidden(); }
     public void permission(String authority) {
         if (SYSTEM_COMPANY.get() != null) return;
         if (isSuper(actor())) return;
         var auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth.getAuthorities().stream().noneMatch(a -> a.getAuthority().equals(authority))) throw denied();
+        if (auth.getAuthorities().stream().noneMatch(a -> a.getAuthority().equals(authority))) throw forbidden();
     }
     public Organization organization(Long id) {
         Organization org = find(Organization.class, id);
@@ -54,7 +61,7 @@ public class TenantAccess {
     public void organizationAdmin(Long id) {
         organization(id);
         User user = actor();
-        if (!isSuper(user) && user.getRole().getRoleLevel() != RoleLevel.ORGANIZATION) throw denied();
+        if (!isSuper(user) && user.getRole().getRoleLevel() != RoleLevel.ORGANIZATION) throw forbidden();
     }
     public Company company(Long id) {
         Company company = find(Company.class, id);
@@ -65,6 +72,10 @@ public class TenantAccess {
             if (!canCompany(user, company)) throw denied();
         }
         if (!Boolean.TRUE.equals(company.getIsActive()) || !Boolean.TRUE.equals(company.getOrganization().getIsActive())) throw denied();
+        // D12 tenant state: writes blocked for SUSPENDED/CANCELLED, PAST_DUE past grace, expired TRIAL.
+        // Jobs/webhooks (system scope) and the platform super admin are not blocked here; jobs call
+        // TenantStatusPolicy.enforce(org, write) themselves.
+        if (SYSTEM_COMPANY.get() == null && !isSuper(actor())) statusPolicy.enforce(company.getOrganization());
         return company;
     }
     public boolean canCompany(User user, Company company) {
@@ -106,7 +117,7 @@ public class TenantAccess {
     public <T> T find(Class<T> type, Long id) {
         if (id == null) throw new IllegalArgumentException("A record/company ID is required.");
         T value = em.find(type, id);
-        if (value == null) throw new IllegalArgumentException("Record not found.");
+        if (value == null) throw new com.leads.exception.RecordNotFoundException("Record not found.");
         return value;
     }
     public <T> T record(Class<T> type, Long id) {
@@ -143,5 +154,9 @@ public class TenantAccess {
         else throw new IllegalArgumentException("Unsupported scoped record type.");
         return value;
     }
-    private static AccessDeniedException denied() { return new AccessDeniedException("This record is outside your permitted scope."); }
+    /** A permission or role refusal (not a hidden record): always 403 FORBIDDEN, whatever the flag (D12). */
+    private static AccessDeniedException forbidden() { return new AccessDeniedException("You don't have permission to do this."); }
+
+    /** Out of scope: 403 today, 404 NOT_FOUND with flag errors.uniform_not_found (D12 / F-9). */
+    private static AccessDeniedException denied() { return new com.leads.exception.ScopeDeniedException("This record is outside your permitted scope."); }
 }

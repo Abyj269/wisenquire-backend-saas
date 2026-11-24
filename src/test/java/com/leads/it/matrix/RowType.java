@@ -16,6 +16,6 @@ public enum RowType {
     X_COMPANY_WIDE,
     /** Parked until D14 (roles.data_scope, Part B item 8). */
     OWN_RECORD, OWN_LIST, OWN_AGG, OWN_WRITE,
-    /** Parked until V51 org status (Part B item 2). */
+    /** ORG_ADMIN of org S (SUSPENDED) / P (PAST_DUE past grace) on its own branch: writes blocked, reads allowed. */
     STATE
 }

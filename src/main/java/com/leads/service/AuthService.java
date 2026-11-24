@@ -56,7 +56,10 @@ public class AuthService {
     @Value("${app.security.otp.expiry-minutes:5}")
     private int otpExpiryMinutes;
 
-    @Value("${app.security.otp.expose-in-response:false}")
+    @Value("${app.tenant.actor-memo.enabled:true}")
+    private boolean actorMemoEnabled = true;
+
+        @Value("${app.security.otp.expose-in-response:false}")
     private boolean exposeOtpInResponse;
 
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -216,6 +219,9 @@ public class AuthService {
         }
         // Authentication.getName() is the email — see CustomUserDetailsService,
         // which builds the security principal from User.email.
+        // 01 Part B item 1: the user the JWT filter already loaded for this request, if any.
+        User memo = actorMemoEnabled ? ActorMemo.get(authentication.getName()) : null;
+        if (memo != null) return memo;
         return userRepository.findByEmail(authentication.getName()).orElse(null);
     }
 

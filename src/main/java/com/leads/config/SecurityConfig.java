@@ -73,8 +73,12 @@ public class SecurityConfig {
                 // @PreAuthorize denials thrown from inside a controller method; this
                 // covers denials from the filter chain itself.
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint((request, response, authException) -> writeJsonError(response, 401, "Please log in to continue."))
-                        .accessDeniedHandler((request, response, accessDeniedException) -> writeJsonError(response, 403, "You don't have permission to do this."))
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            boolean revoked = Boolean.TRUE.equals(request.getAttribute(JwtAuthenticationFilter.SESSION_REVOKED_ATTRIBUTE));
+                            writeJsonError(response, revoked ? com.leads.exception.ErrorCode.SESSION_REVOKED : com.leads.exception.ErrorCode.UNAUTHENTICATED,
+                                    revoked ? "Your session has ended. Please log in again." : "Please log in to continue.");
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> writeJsonError(response, com.leads.exception.ErrorCode.FORBIDDEN, "You don't have permission to do this."))
                 )
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints - listed both with and without the
@@ -124,10 +128,11 @@ public class SecurityConfig {
         return http.build();
     }
 
-    private void writeJsonError(HttpServletResponse response, int status, String message) throws IOException {
-        response.setStatus(status);
+    /** D12 body for errors raised by the filter chain itself (before any controller). */
+    private void writeJsonError(HttpServletResponse response, com.leads.exception.ErrorCode code, String message) throws IOException {
+        response.setStatus(code.status.value());
         response.setContentType("application/json");
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.getWriter().write("{\"message\":\"" + message.replace("\"", "'") + "\"}");
+        response.getWriter().write(com.leads.exception.ErrorBodies.json(code, message));
     }
 }

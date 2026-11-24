@@ -25,9 +25,17 @@ class PersonaFixtureIT extends AbstractIntegrationTest {
     void twoOrgsTwoCompaniesTwoBranchesWithDistinctIds() {
         Set<Long> branches = new HashSet<>(), companies = new HashSet<>();
         for (Slot s : Slot.values()) { branches.add(fixture.branch(s)); companies.add(fixture.company(s)); }
-        assertEquals(8, branches.size());
-        assertEquals(4, companies.size());
+        // A and B: 2 companies x 2 branches each; S and P (STATE rows): 1 x 1 each.
+        assertEquals(10, branches.size());
+        assertEquals(6, companies.size());
         assertNotEquals(fixture.org('A'), fixture.org('B'));
+        fixture.inTx(() -> {
+            assertEquals(com.leads.model.enums.OrganizationStatus.ACTIVE, em.find(Organization.class, fixture.org('A')).getStatus());
+            assertEquals(com.leads.model.enums.OrganizationStatus.ACTIVE, em.find(Organization.class, fixture.org('B')).getStatus());
+            assertEquals(com.leads.model.enums.OrganizationStatus.SUSPENDED, em.find(Organization.class, fixture.org('S')).getStatus());
+            assertEquals(com.leads.model.enums.OrganizationStatus.PAST_DUE, em.find(Organization.class, fixture.org('P')).getStatus());
+            return null;
+        });
         fixture.inTx(() -> {
             for (Slot s : Slot.values()) {
                 Lead lead = em.find(Lead.class, fixture.lead(s));
@@ -67,9 +75,9 @@ class PersonaFixtureIT extends AbstractIntegrationTest {
 
     @Test
     void discoveryFindsEveryApplicationEndpoint() {
-        // 01 §7 / plan D3: 188 mappings at v3.1. When an endpoint is added or removed, update
+        // 01 §7 / plan D3: 188 mappings at v3.1, + GET /me/feature-flags (Step 5.1) = 189. When an endpoint is added or removed, update
         // this number together with the matrix rows or the pending list.
-        assertEquals(188, EndpointCatalog.discover(mappings).size());
+        assertEquals(189, EndpointCatalog.discover(mappings).size());
     }
 
 

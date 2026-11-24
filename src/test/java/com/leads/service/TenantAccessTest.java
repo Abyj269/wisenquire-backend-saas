@@ -17,7 +17,7 @@ class TenantAccessTest {
     EntityManager em = mock(EntityManager.class);
     UserRepository users = mock(UserRepository.class);
     LeadRepository leads = mock(LeadRepository.class);
-    TenantAccess access = new TenantAccess(em, users, leads);
+    TenantAccess access = new TenantAccess(em, users, leads, new TenantStatusPolicy(7));
     Organization org = Organization.builder().id(1L).isActive(true).build();
     Company allowed = Company.builder().id(10L).organization(org).isActive(true).build();
     Company other = Company.builder().id(20L).organization(org).isActive(true).build();

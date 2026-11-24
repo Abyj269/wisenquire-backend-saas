@@ -1,7 +1,13 @@
 package com.leads.exception;
 
+import com.leads.config.TenantContext;
+import com.leads.flags.FeatureFlag;
+import com.leads.flags.FeatureFlags;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -9,129 +15,189 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
- * Without this, every IllegalArgumentException thrown by a service (there are
- * dozens — "Company not found", pipeline validation, etc.) fell through to
- * Spring Boot's default handler as an opaque 500 with no message in the
- * response body, so the frontend's error banners never had anything to show.
+ * D12 error contract: every error body is {@code {code, message, details, traceId}}
+ * (see {@link ErrorCode}). {@code message} keeps its old meaning, so the existing frontend parser
+ * ({@code api.service.ts}) keeps working.
  * <p>
- * Every handler here is deliberately narrow — each returns a message a
- * developer wrote specifically for end users (a validation rule, a business
- * reason, Meta's own API error text). The two handlers at the bottom
- * ({@link AccessDeniedException} and the {@link Exception} catch-all) exist
- * for the opposite reason: to guarantee that anything NOT on this list —
- * a stray NullPointerException, a raw SQL constraint message, a stack
- * trace — never reaches the frontend verbatim. The real exception is always
- * logged server-side; only a generic, safe message crosses the wire.
+ * Every handler returns a message written for end users. The {@link Exception} catch-all exists so
+ * that a stray NullPointerException, SQL text or stack trace never reaches the client: the real
+ * exception is logged server-side, and only a generic message crosses the wire.
+ * <p>
+ * Missing vs out-of-scope records (F-9): with flag {@code errors.uniform_not_found} OFF (default) the
+ * old statuses are kept: missing 400, out of scope 403. With the flag ON for the caller's org both are
+ * 404 NOT_FOUND with the same message, so the response no longer tells whether the record exists.
  */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
-    public ResponseEntity<Map<String, String>> handleUploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
-        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
-                .body(errorBody("The attachment exceeds the server upload limit. Choose a smaller file."));
+    static final String NOT_FOUND_MESSAGE = "Record not found.";
+    static final String FORBIDDEN_MESSAGE = "You don't have permission to do this.";
+
+    private final ObjectProvider<FeatureFlags> flags;
+
+    /** Plain construction (standalone MockMvc, unit tests): every flag OFF, i.e. the old statuses. */
+    public GlobalExceptionHandler() { this.flags = null; }
+
+    @Autowired
+    public GlobalExceptionHandler(ObjectProvider<FeatureFlags> flags) { this.flags = flags; }
+
+    // ---- D12-native ------------------------------------------------------------------------
+
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<Map<String, Object>> handleApi(ApiException ex) {
+        return respond(ex.getCode(), ex.getMessage(), ex.getDetails());
     }
 
+    @ExceptionHandler(RecordNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleRecordNotFound(RecordNotFoundException ex) {
+        if (uniformNotFound()) return respond(ErrorCode.NOT_FOUND, NOT_FOUND_MESSAGE, Map.of());
+        return respond(ErrorCode.VALIDATION_FAILED, ex.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(ScopeDeniedException.class)
+    public ResponseEntity<Map<String, Object>> handleScopeDenied(ScopeDeniedException ex) {
+        if (uniformNotFound()) return respond(ErrorCode.NOT_FOUND, NOT_FOUND_MESSAGE, Map.of());
+        return respond(ErrorCode.FORBIDDEN, FORBIDDEN_MESSAGE, Map.of());
+    }
+
+    // ---- existing exceptions mapped to codes ----------------------------------------------
+
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleUploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException ex) {
+        return respond(ErrorCode.PAYLOAD_TOO_LARGE, "The attachment exceeds the server upload limit. Choose a smaller file.", Map.of());
+    }
+
+    /** Keeps the exception's own status; the code is the closest D12 code for that status. */
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
-    public ResponseEntity<Map<String,String>> handleStatus(org.springframework.web.server.ResponseStatusException ex) {
-        return ResponseEntity.status(ex.getStatusCode()).body(errorBody(ex.getReason()));
+    public ResponseEntity<Map<String, Object>> handleStatus(org.springframework.web.server.ResponseStatusException ex) {
+        HttpStatusCode status = ex.getStatusCode();
+        ErrorCode code = codeFor(status);
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status);
+        if (code == ErrorCode.RATE_LIMITED) builder.header(HttpHeaders.RETRY_AFTER, "60");
+        return builder.body(ErrorBodies.of(code, ex.getReason(), Map.of()));
     }
+
     @ExceptionHandler(org.springframework.security.core.AuthenticationException.class)
-    public ResponseEntity<Map<String,String>> handleAuthentication(org.springframework.security.core.AuthenticationException ex) {
-        return ResponseEntity.status(401).body(errorBody("Invalid credentials or disabled account."));
+    public ResponseEntity<Map<String, Object>> handleAuthentication(org.springframework.security.core.AuthenticationException ex) {
+        return respond(ErrorCode.UNAUTHENTICATED, "Invalid credentials or disabled account.", Map.of());
     }
+
     @ExceptionHandler(org.springframework.dao.OptimisticLockingFailureException.class)
-    public ResponseEntity<Map<String,String>> handleConflict(Exception ex) {
-        return ResponseEntity.status(409).body(errorBody("This record changed. Reload it before retrying."));
+    public ResponseEntity<Map<String, Object>> handleConflict(Exception ex) {
+        return respond(ErrorCode.CONFLICT, "This record changed. Reload it before retrying.", Map.of());
     }
+
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(ex.getMessage()));
+    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        return respond(ErrorCode.VALIDATION_FAILED, ex.getMessage(), Map.of());
     }
 
     @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(ex.getMessage()));
+    public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException ex) {
+        return respond(ErrorCode.CONFLICT, ex.getMessage(), Map.of());
     }
 
     @ExceptionHandler(LoginNotAllowedException.class)
-    public ResponseEntity<Map<String, String>> handleLoginNotAllowed(LoginNotAllowedException ex) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorBody(ex.getMessage()));
+    public ResponseEntity<Map<String, Object>> handleLoginNotAllowed(LoginNotAllowedException ex) {
+        return respond(ErrorCode.FORBIDDEN, ex.getMessage(), Map.of());
     }
 
     @ExceptionHandler(WhatsAppApiException.class)
-    public ResponseEntity<Map<String, String>> handleWhatsAppApi(WhatsAppApiException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorBody(ex.getMessage()));
+    public ResponseEntity<Map<String, Object>> handleWhatsAppApi(WhatsAppApiException ex) {
+        return respond(ErrorCode.UPSTREAM_ERROR, ex.getMessage(), Map.of("provider", "WHATSAPP"));
     }
 
     @ExceptionHandler(AdsProviderApiException.class)
-    public ResponseEntity<Map<String, String>> handleAdsProviderApi(AdsProviderApiException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorBody(ex.getMessage()));
+    public ResponseEntity<Map<String, Object>> handleAdsProviderApi(AdsProviderApiException ex) {
+        return respond(ErrorCode.UPSTREAM_ERROR, ex.getMessage(), Map.of("provider", "ADS"));
     }
 
     @ExceptionHandler(AiProviderApiException.class)
-    public ResponseEntity<Map<String, String>> handleAiProviderApi(AiProviderApiException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorBody(ex.getMessage()));
-    }
-
-    /** A branch's own configured AI usage cap was hit — distinct from a provider-side rate limit (see {@link AiProviderApiException}). Structured body so the frontend can render a specific usage banner instead of a generic error toast. */
-    @ExceptionHandler(AiUsageLimitExceededException.class)
-    public ResponseEntity<Map<String, Object>> handleAiUsageLimit(AiUsageLimitExceededException ex) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("message", ex.getMessage());
-        body.put("limitType", ex.getLimitType().name());
-        body.put("currentValue", ex.getCurrentValue());
-        body.put("capValue", ex.getCapValue());
-        body.put("resetsAt", ex.getResetsAt());
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(body);
-    }
-
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, String>> handleValidation(MethodArgumentNotValidException ex) {
-        String message = ex.getBindingResult().getFieldErrors().stream()
-                .map(f -> f.getField() + ": " + f.getDefaultMessage())
-                .collect(Collectors.joining(", "));
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody(message));
-    }
-
-    /** A @PreAuthorize denial (e.g. missing COMPANY_BRANCH_SETTINGS:VIEW) — previously fell through with no body, which is why the frontend showed Angular's own raw "403 OK" text instead of a real reason. */
-    @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<Map<String, String>> handleAccessDenied(AccessDeniedException ex) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorBody("You don't have permission to do this."));
+    public ResponseEntity<Map<String, Object>> handleAiProviderApi(AiProviderApiException ex) {
+        return respond(ErrorCode.UPSTREAM_ERROR, ex.getMessage(), Map.of("provider", "AI"));
     }
 
     /**
-     * No controller and no static resource matched the URL (Spring 6.1+ throws
-     * {@code NoResourceFoundException} from the resource handler; {@code NoHandlerFoundException}
-     * when no handler exists at all). Without these two, the {@link Exception} catch-all below
-     * turned every unknown path — e.g. /swagger-ui.html with springdoc off in prod — into a 500
-     * and an ERROR log line. Spring picks the most specific matching handler, so these win over
-     * the catch-all regardless of order. The body never echoes the requested path.
+     * A branch's own configured AI usage cap was hit. D12 moves the structured fields under
+     * {@code details}; they are also kept at the top level until the frontend (01 Part B, Step 5.3)
+     * reads them from {@code details}.
+     */
+    @ExceptionHandler(AiUsageLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleAiUsageLimit(AiUsageLimitExceededException ex) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("limitType", ex.getLimitType().name());
+        details.put("currentValue", ex.getCurrentValue());
+        details.put("capValue", ex.getCapValue());
+        details.put("resetsAt", ex.getResetsAt());
+        Map<String, Object> body = ErrorBodies.of(ErrorCode.AI_USAGE_LIMIT, ex.getMessage(), details);
+        body.putAll(details); // legacy top-level keys (transition)
+        return ResponseEntity.status(ErrorCode.AI_USAGE_LIMIT.status).body(body);
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        List<Map<String, String>> fields = ex.getBindingResult().getFieldErrors().stream()
+                .map(f -> Map.of("field", f.getField(), "message", String.valueOf(f.getDefaultMessage())))
+                .toList();
+        String message = String.join(", ", fields.stream().map(f -> f.get("field") + ": " + f.get("message")).toList());
+        return respond(ErrorCode.VALIDATION_FAILED, message, Map.of("fields", fields));
+    }
+
+    /** A permission denial (@PreAuthorize, access.permission): always 403, whatever the flag. */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
+        return respond(ErrorCode.FORBIDDEN, FORBIDDEN_MESSAGE, Map.of());
+    }
+
+    /**
+     * No controller and no static resource matched the URL (e.g. /swagger-ui.html with springdoc off).
+     * The body never echoes the requested path.
      */
     @ExceptionHandler({
             org.springframework.web.servlet.resource.NoResourceFoundException.class,
             org.springframework.web.servlet.NoHandlerFoundException.class
     })
-    public ResponseEntity<Map<String, String>> handleNotFound(Exception ex) {
+    public ResponseEntity<Map<String, Object>> handleNotFound(Exception ex) {
         log.debug("No handler for request: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody("Not found."));
+        return respond(ErrorCode.NOT_FOUND, "Not found.", Map.of());
     }
 
-    /** Catch-all for anything not covered above — logs the real exception and returns a generic, safe message instead of leaking internal details. */
+    /** Catch-all: log the real exception, return a generic, safe message. */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleUnexpected(Exception ex) {
+    public ResponseEntity<Map<String, Object>> handleUnexpected(Exception ex) {
         log.error("Unhandled exception", ex);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorBody("Something went wrong. Please try again."));
+        return respond(ErrorCode.INTERNAL_ERROR, "Something went wrong. Please try again.", Map.of());
     }
 
-    private Map<String, String> errorBody(String message) {
-        Map<String, String> body = new LinkedHashMap<>();
-        body.put("message", message != null ? message : "Request could not be processed.");
-        return body;
+    // ---- helpers ---------------------------------------------------------------------------
+
+    private ResponseEntity<Map<String, Object>> respond(ErrorCode code, String message, Map<String, ?> details) {
+        return ResponseEntity.status(code.status).body(ErrorBodies.of(code, message, details));
+    }
+
+    private boolean uniformNotFound() {
+        FeatureFlags f = flags == null ? null : flags.getIfAvailable();
+        if (f == null) return false;
+        Long org = TenantContext.get().map(TenantContext.Data::organizationId).orElse(null);
+        return f.isOn(FeatureFlag.ERRORS_UNIFORM_NOT_FOUND, org);
+    }
+
+    static ErrorCode codeFor(HttpStatusCode status) {
+        return switch (status.value()) {
+            case 400 -> ErrorCode.VALIDATION_FAILED;
+            case 401 -> ErrorCode.UNAUTHENTICATED;
+            case 403 -> ErrorCode.FORBIDDEN;
+            case 404 -> ErrorCode.NOT_FOUND;
+            case 409 -> ErrorCode.CONFLICT;
+            case 413 -> ErrorCode.PAYLOAD_TOO_LARGE;
+            case 429 -> ErrorCode.RATE_LIMITED;
+            case 502, 503, 504 -> ErrorCode.UPSTREAM_ERROR;
+            default -> status.is4xxClientError() ? ErrorCode.VALIDATION_FAILED : ErrorCode.INTERNAL_ERROR;
+        };
     }
 }

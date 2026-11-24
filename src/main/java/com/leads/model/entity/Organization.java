@@ -35,6 +35,23 @@ public class Organization {
     @Column(length = 50)
     private String subscriptionPlan;
 
+    /** Tenant lifecycle (V51). Enforced in TenantAccess.company() via TenantStatusPolicy. */
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    @Column(nullable = false, length = 20)
+    private com.leads.model.enums.OrganizationStatus status = com.leads.model.enums.OrganizationStatus.ACTIVE;
+
+    /** When status last changed; the PAST_DUE grace period is measured from it. */
+    private LocalDateTime statusChangedAt;
+
+    private LocalDateTime trialEndsAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_user_id")
+    private User ownerUser;
+
+    private LocalDateTime deletedAt;
+
     // LONGTEXT, not TEXT — TEXT's 64KB cap a base64-encoded logo easily exceeds.
     @Column(columnDefinition = "LONGTEXT")
     private String logoUrl;

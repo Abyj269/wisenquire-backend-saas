@@ -15,6 +15,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("UPDATE User u SET u.sessionVersion = u.sessionVersion + 1 WHERE u.role.id = :roleId")
     int revokeSessionsForRole(@Param("roleId") Long roleId);
     Optional<User> findByEmail(String email);
+
+    /**
+     * 01 Part B item 1: everything TenantAccess needs, in one query, so the user can be used
+     * detached for the rest of the request (ActorMemo). Only role.permissions is a list.
+     */
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {
+            "role", "role.permissions", "organization", "allowedCompanies", "allowedBranches", "allowedBranches.company"})
+    @Query("SELECT u FROM User u WHERE u.email = :email")
+    Optional<User> findForAuthenticationByEmail(@Param("email") String email);
     boolean existsByEmail(String email);
 
     List<User> findByOrganizationId(Long organizationId);

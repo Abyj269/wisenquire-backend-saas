@@ -348,6 +348,7 @@ public class TenantManagementService {
 
         roleRepo.saveAndFlush(role);
         userRepo.revokeSessionsForRole(id);
+        ActorMemo.clear(); // the caller may hold this role
         return mapRoleToDto(role);
     }
 
@@ -447,6 +448,7 @@ public class TenantManagementService {
         }
 
         user.setSessionVersion(user.getSessionVersion()+1);
+        ActorMemo.clear(); // an admin may be editing themselves: the next actor() re-reads (01 Part B item 1)
         user.setAllowedCompanies(companies);
         user.setAllowedBranches(branches);
 

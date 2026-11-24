@@ -25,6 +25,21 @@ class HarnessSmokeIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void openApiPublishesTheD12ErrorContractAndMeEndpoint() throws Exception {
+        String doc = mvc.perform(get("/v3/api-docs")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        org.junit.jupiter.api.Assertions.assertTrue(doc.contains("\"ErrorResponse\""), "ErrorResponse schema");
+        org.junit.jupiter.api.Assertions.assertTrue(doc.contains("\"TENANT_SUSPENDED\""), "ErrorCode enum values");
+        org.junit.jupiter.api.Assertions.assertTrue(doc.contains("/me/feature-flags"), "GET /me/feature-flags");
+    }
+
+    @Test
+    void unauthenticatedBodyHasACode() throws Exception {
+        mvc.perform(get("/leads")).andExpect(status().isUnauthorized())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Please log in to continue."));
+    }
+
+    @Test
     void anonymousDataRequestIs401() throws Exception {
         mvc.perform(get("/leads")).andExpect(status().isUnauthorized());
     }

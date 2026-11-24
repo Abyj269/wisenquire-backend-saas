@@ -34,8 +34,9 @@ class StompTenantContextTest {
         when(tokens.getSessionVersion("tok")).thenReturn(0L);
         when(tokens.getContextClaims("tok")).thenReturn(new TenantContext.Data(11L, 4L, "BRANCH"));
         UserBuilder principal = org.springframework.security.core.userdetails.User.withUsername("agent@example.test").password("x").authorities(List.of());
-        when(details.loadUserByUsername("agent@example.test")).thenReturn(principal.build());
-        when(users.findByEmail("agent@example.test")).thenReturn(Optional.of(User.builder().email("agent@example.test").sessionVersion(0L).build()));
+        when(details.toUserDetails(org.mockito.ArgumentMatchers.any(User.class))).thenReturn(principal.build());
+        User agent = User.builder().email("agent@example.test").sessionVersion(0L).build();
+        when(users.findForAuthenticationByEmail("agent@example.test")).thenReturn(Optional.of(agent));
     }
     @AfterEach void reset() { TenantContext.clear(); }
 

@@ -30,6 +30,11 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
+        return toUserDetails(user);
+    }
+
+    /** Builds the Spring Security principal from an already-loaded user (no query). */
+    public UserDetails toUserDetails(User user) {
 
         Set<GrantedAuthority> authorities = new HashSet<>();
         // Add Role Level authority

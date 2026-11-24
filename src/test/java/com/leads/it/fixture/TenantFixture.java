@@ -78,7 +78,7 @@ public class TenantFixture {
     public String token(char org, Persona p) { return ensureBuilt().token.get(org + ":" + p); }
 
     /** The slot a persona "lives" in: its own company x1 and branch x1a. */
-    public static Slot home(char org) { return org == 'A' ? Slot.A1a : Slot.B1a; }
+    public static Slot home(char org) { return Slot.valueOf(org + "1a"); }
 
     // ---- fresh records for rows that write --------------------------------------------------
 
@@ -104,13 +104,18 @@ public class TenantFixture {
     // ---- build ----------------------------------------------------------------------------
 
     private void build() {
-        for (char o : new char[]{'A', 'B'}) {
-            Organization org = persist(Organization.builder().name("IT Org " + o).code("IT-ORG-" + o).build());
+        for (char o : new char[]{'A', 'B', 'S', 'P'}) {
+            boolean stateOrg = o == 'S' || o == 'P';
+            Organization org = Organization.builder().name("IT Org " + o).code("IT-ORG-" + o).build();
+            // STATE rows: S is SUSPENDED; P has been PAST_DUE for 30 days (past the 7-day grace).
+            if (o == 'S') { org.setStatus(OrganizationStatus.SUSPENDED); org.setStatusChangedAt(java.time.LocalDateTime.now()); }
+            if (o == 'P') { org.setStatus(OrganizationStatus.PAST_DUE); org.setStatusChangedAt(java.time.LocalDateTime.now().minusDays(30)); }
+            persist(org);
             orgId.put(o, org.getId());
             Map<Persona, Role> roles = new EnumMap<>(Persona.class);
             for (Persona p : Persona.values()) roles.put(p, role(org, p));
 
-            for (int c = 1; c <= 2; c++) {
+            for (int c = 1; c <= (stateOrg ? 1 : 2); c++) {
                 String code = o + "" + c;
                 Company company = persist(Company.builder().organization(org).name("IT Company " + code).code("IT-" + code).build());
                 companyId.put(code, company.getId());
@@ -120,7 +125,7 @@ public class TenantFixture {
                 persist(LeadStatus.builder().company(company).statusName("Lost").statusCode("LOST").stageType(StageType.LOST).sortOrder(9).build());
                 sourceId.put(code, persist(LeadSource.builder().company(company).sourceName("Walk-in").sourceCode("WALKIN").build()).getId());
                 lostReasonId.put(code, persist(LeadLostReason.builder().company(company).reasonText("Price").build()).getId());
-                for (char b : new char[]{'a', 'b'}) {
+                for (char b : stateOrg ? new char[]{'a'} : new char[]{'a', 'b'}) {
                     Slot slot = Slot.valueOf(code + b);
                     branchId.put(slot, persist(Branch.builder().company(company).name("IT Branch " + slot).code("IT-" + slot).build()).getId());
                 }

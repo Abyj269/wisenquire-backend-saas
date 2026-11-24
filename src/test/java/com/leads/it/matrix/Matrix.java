@@ -29,6 +29,7 @@ public final class Matrix {
         all.addAll(CustomerRows.specs());
         all.addAll(WhatsAppRows.specs());
         all.addAll(ReportsRows.specs());
+        all.addAll(MeRows.specs());
         return all;
     }
 
@@ -37,6 +38,11 @@ public final class Matrix {
         for (EndpointSpec spec : specs()) {
             List<Row> rows = new ArrayList<>();
             rows.add(new Row(spec, RowType.ANON, 'A', null, Slot.A1a, Outcome.UNAUTHENTICATED, spec.request, null));
+            if (spec.scope == EndpointSpec.Scope.SELF) {
+                for (Persona p : spec.personas) rows.add(new Row(spec, RowType.ALLOWED, 'A', p, Slot.A1a, Outcome.ALLOWED, spec.request, null));
+                rows.forEach(r -> (r.expected() == Outcome.ALLOWED ? allowed : denials).add(r));
+                continue;
+            }
             for (Persona p : spec.personas) {
                 boolean branchLevel = p.level == RoleLevel.BRANCH;
                 if (spec.scope == EndpointSpec.Scope.COMPANY_WIDE && branchLevel) {
@@ -51,6 +57,13 @@ public final class Matrix {
             }
             if (spec.scope == EndpointSpec.Scope.BRANCH && spec.personas.contains(Persona.BRANCH_MGR)) {
                 rows.add(new Row(spec, RowType.X_BRANCH, 'A', Persona.BRANCH_MGR, Slot.A1b, Outcome.DENIED, spec.request, null));
+            }
+            // STATE (01 Part B item 2): the org's ORG_ADMIN on its own branch. Writes are blocked;
+            // reads still work. Skipped where the spec cannot produce a successful call at all.
+            if (spec.noAllowedReason == null && spec.personas.contains(Persona.ORG_ADMIN)) {
+                boolean write = !spec.key.startsWith("GET ");
+                rows.add(new Row(spec, RowType.STATE, 'S', Persona.ORG_ADMIN, Slot.S1a, write ? Outcome.TENANT_SUSPENDED : Outcome.ALLOWED, spec.request, null));
+                rows.add(new Row(spec, RowType.STATE, 'P', Persona.ORG_ADMIN, Slot.P1a, write ? Outcome.TENANT_PAST_DUE : Outcome.ALLOWED, spec.request, null));
             }
             rows.addAll(spec.extra);
             for (Row r : rows) {

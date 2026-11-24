@@ -43,6 +43,7 @@ public class RequestTraceFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
         } finally {
             TenantContext.clear();
+            com.leads.service.ActorMemo.clear();
             MDC.remove(MDC_TRACE_ID);
         }
     }

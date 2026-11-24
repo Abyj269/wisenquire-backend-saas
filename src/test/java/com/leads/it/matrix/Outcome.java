@@ -13,7 +13,11 @@ public enum Outcome {
     /** Out of scope. */
     DENIED(403),
     /** No or invalid token. */
-    UNAUTHENTICATED(401);
+    UNAUTHENTICATED(401),
+    /** STATE: a write by a SUSPENDED / CANCELLED org (D12 TENANT_SUSPENDED). */
+    TENANT_SUSPENDED(423),
+    /** STATE: a write by a PAST_DUE org past its grace period (D12 TENANT_PAST_DUE). */
+    TENANT_PAST_DUE(402);
 
     public final int status;
 

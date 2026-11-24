@@ -26,7 +26,9 @@ public final class EndpointSpec {
         /** Only a companyId (no branch parameter): X-ORG, X-COMPANY. */
         COMPANY,
         /** Needs company-wide scope: branch-level personas are denied even at home. */
-        COMPANY_WIDE
+        COMPANY_WIDE,
+        /** Takes no ids at all (the caller's own context, e.g. /me/...): ANON and ALLOWED rows only. */
+        SELF
     }
 
     @FunctionalInterface

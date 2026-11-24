@@ -190,6 +190,12 @@
             <version>1.8</version>
         </dependency>
 
+        <!-- D13 feature-flag cache (01 Part B item 4); version managed by Spring Boot. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

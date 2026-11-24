@@ -8,7 +8,7 @@ class UploadErrorNotificationTest {
     @Test void oversizedUploadReturnsUseful413Message() {
         var response = new GlobalExceptionHandler().handleUploadTooLarge(new MaxUploadSizeExceededException(100));
         assertEquals(413, response.getStatusCode().value());
-        assertTrue(response.getBody().get("message").contains("Choose a smaller file"));
+        assertTrue(String.valueOf(response.getBody().get("message")).contains("Choose a smaller file"));
     }
     @Test void unsupportedFileValidationMessageReachesClient() {
         var response = new GlobalExceptionHandler().handleIllegalArgument(new IllegalArgumentException("This file format is not supported by WhatsApp."));
