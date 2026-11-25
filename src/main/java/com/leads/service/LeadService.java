@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
 public class LeadService {
     private final TenantAccess access;
     private final DocumentNumberService numbers;
+    private final CompanyClock companyClock;
 
     private final LeadRepository leadRepo;
     private final LeadProductRepository leadProductRepo;
@@ -71,6 +72,13 @@ public class LeadService {
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + req.getBranchId()));
 
         access.sameCompany(company.getId(), branch.getCompany());
+        // D14 (module 06 P1): an OWN agent's new lead is theirs. No assignee = assigned to them;
+        // another assignee is refused (OWN agents never assign others).
+        Long ownMe = access.ownerFilter();
+        if (ownMe != null) {
+            if (req.getAssignedToUserId() == null) req.setAssignedToUserId(ownMe);
+            else if (!ownMe.equals(req.getAssignedToUserId())) throw new org.springframework.security.access.AccessDeniedException("You can only create leads assigned to yourself.");
+        }
         validateReferences(company.getId(), branch.getId(), req.getStatusId(), req.getSourceId(), req.getPurposeId(), req.getAssignedToUserId());
         com.leads.util.InputRules.amount(req.getEstimatedDealValue(),"Deal value");
         req.setPhone(com.leads.util.PhoneNumberUtil.canonical(req.getPhone()));
@@ -89,7 +97,7 @@ public class LeadService {
         // Resolve Assigned User
         User assignedTo = null;
         if (req.getAssignedToUserId() != null) {
-            access.permission("LEADS:ASSIGN");
+            if (ownMe == null) access.permission("LEADS:ASSIGN"); // OWN: assigned to self above, no ASSIGN right needed
             assignedTo = userRepo.findById(req.getAssignedToUserId()).orElse(null);
         }
 
@@ -290,14 +298,14 @@ public class LeadService {
         }
 
         if (req.getAssignedToUserId() == null && lead.getAssignedTo() != null) {
-            access.permission("LEADS:ASSIGN");
+            if (!ownAssigneeChange(lead, null)) access.permission("LEADS:ASSIGN");
             lead.setAssignedTo(null); lead.setAssignedBy(currentUser);
             recordActivity(lead, ActivityType.REASSIGNMENT, "Lead Unassigned", "Assignment cleared", currentUser);
         }
         // Handle Assignment
         if (req.getAssignedToUserId() != null) {
             if (lead.getAssignedTo() == null || !lead.getAssignedTo().getId().equals(req.getAssignedToUserId())) {
-                access.permission("LEADS:ASSIGN");
+                if (!ownAssigneeChange(lead, req.getAssignedToUserId())) access.permission("LEADS:ASSIGN");
                 User oldUser = lead.getAssignedTo();
                 User newUser = userRepo.findById(req.getAssignedToUserId())
                         .orElseThrow(() -> new IllegalArgumentException("User not found: " + req.getAssignedToUserId()));
@@ -388,8 +396,18 @@ public class LeadService {
 
     @Transactional
     public void assignLeads(LeadAssignRequest req) {
-        access.permission("LEADS:ASSIGN");
-        req.getLeadIds().forEach(id -> access.record(Lead.class, id));
+        Long ownMe = access.ownerFilter();
+        if (ownMe != null) {
+            // D14 (module 06 P1): an OWN agent may only claim unassigned leads for themself, and only
+            // when own_scope.include_unassigned is on. No LEADS:ASSIGN right is needed for that.
+            if (!ownMe.equals(req.getAssignToUserId()) || !access.ownIncludesUnassigned()) throw new org.springframework.security.access.AccessDeniedException("You can only claim unassigned leads for yourself.");
+            req.getLeadIds().forEach(id -> {
+                if (access.record(Lead.class, id).getAssignedTo() != null) throw new org.springframework.security.access.AccessDeniedException("You can only claim unassigned leads for yourself.");
+            });
+        } else {
+            access.permission("LEADS:ASSIGN");
+            req.getLeadIds().forEach(id -> access.record(Lead.class, id));
+        }
         User assignToUser = userRepo.findById(req.getAssignToUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Assignee not found: " + req.getAssignToUserId()));
         User currentUser = authService.getCurrentUser();
@@ -549,9 +567,18 @@ public class LeadService {
         access.scope(companyId, branchId);
         com.leads.util.InputRules.dateRange(fromDate,toDate);
         List<Long> permittedBranches = access.branchIds();
+        // D14 (module 06 P1): OWN agents see their own leads (+ unassigned with include_unassigned).
+        // Shared by the grid, the Kanban, the dashboard metrics and the reports, so they all agree.
+        Long ownMe = access.ownerFilter();
+        boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
+        // D15 (module 06 P1): "from"/"to" are company-local days, as server wall-clock bounds.
+        Company zoneCompany = companyId != null ? access.company(companyId) : null;
+        LocalDateTime fromBound = fromDate == null ? null : companyClock.range(zoneCompany, fromDate, fromDate).start();
+        LocalDateTime toBound = toDate == null ? null : companyClock.range(zoneCompany, toDate, toDate).endExclusive();
         return (root, query, cb) -> {
             var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
             if (permittedBranches != null) predicates.add(root.get("branch").get("id").in(permittedBranches));
+            if (ownMe != null) predicates.add(ownPredicate(root, cb, ownMe, ownUnassigned));
 
             if (companyId != null) {
                 predicates.add(cb.equal(root.get("company").get("id"), companyId));
@@ -566,10 +593,10 @@ public class LeadService {
                 predicates.add(cb.equal(root.get("source").get("id"), sourceId));
             }
             if (fromDate != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromDate.atStartOfDay()));
+                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromBound));
             }
             if (toDate != null) {
-                predicates.add(cb.lessThan(root.get("createdAt"), toDate.plusDays(1).atStartOfDay()));
+                predicates.add(cb.lessThan(root.get("createdAt"), toBound));
             }
             if (search != null && !search.isBlank()) {
                 String pattern = "%" + search.trim().toLowerCase() + "%";
@@ -598,7 +625,43 @@ public class LeadService {
     @Transactional(readOnly = true)
     public Page<LeadDto> getLeadsByCustomer(Long customerId, Pageable pageable) {
         access.record(com.leads.model.entity.Customer.class, customerId);
-        return leadRepo.findByCustomerIdOrderByCreatedAtDesc(customerId, pageable).map(this::mapToDto);
+        // Module 06 P1: the customer's leads the caller may see: permitted branches and, for OWN agents,
+        // their own (was: every lead of the customer in every branch).
+        List<Long> permittedBranches = access.branchIds();
+        Long ownMe = access.ownerFilter();
+        boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
+        Specification<Lead> spec = (root, query, cb) -> {
+            var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
+            predicates.add(cb.equal(root.get("customer").get("id"), customerId));
+            if (permittedBranches != null) predicates.add(root.get("branch").get("id").in(permittedBranches));
+            if (ownMe != null) predicates.add(ownPredicate(root, cb, ownMe, ownUnassigned));
+            return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        };
+        org.springframework.data.domain.Pageable byNewest = org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+        return leadRepo.findAll(spec, byNewest).map(this::mapToDto);
+    }
+
+    /** D14: assigned to {@code me}, or also unassigned when the org shows unassigned leads to OWN agents. */
+    private static jakarta.persistence.criteria.Predicate ownPredicate(jakarta.persistence.criteria.Root<Lead> root,
+            jakarta.persistence.criteria.CriteriaBuilder cb, Long me, boolean includeUnassigned) {
+        var assignee = root.join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+        return includeUnassigned ? cb.or(cb.equal(assignee.get("id"), me), cb.isNull(assignee.get("id"))) : cb.equal(assignee.get("id"), me);
+    }
+
+    /**
+     * D14 (module 06 P1): OWN agents may not assign, reassign or unassign. The one exception is
+     * self-claim: an unassigned lead, to themself, with own_scope.include_unassigned on (no
+     * LEADS:ASSIGN right needed). Returns true when the change is allowed for an OWN agent;
+     * false for everyone else (the caller then checks LEADS:ASSIGN as before).
+     */
+    private boolean ownAssigneeChange(Lead lead, Long newAssignee) {
+        Long me = access.ownerFilter();
+        if (me == null) return false;
+        Long current = lead.getAssignedTo() == null ? null : lead.getAssignedTo().getId();
+        if (Objects.equals(current, newAssignee)) return true;
+        if (current == null && me.equals(newAssignee) && access.ownIncludesUnassigned()) return true;
+        throw new org.springframework.security.access.AccessDeniedException("You can only claim unassigned leads for yourself.");
     }
 
     @Transactional(readOnly = true)

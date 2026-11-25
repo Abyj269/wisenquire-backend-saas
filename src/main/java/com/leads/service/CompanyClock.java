@@ -67,7 +67,11 @@ public class CompanyClock {
     }
 
     public ZoneId zone(Company company) {
-        String tz = company == null ? null : company.getTimezone();
+        return zone(company == null ? null : company.getTimezone());
+    }
+
+    /** A company timezone column value; blank or unknown = the server zone. */
+    public ZoneId zone(String tz) {
         if (tz == null || tz.isBlank()) return SERVER_ZONE;
         try { return ZoneId.of(tz); } catch (DateTimeException e) { return SERVER_ZONE; }
     }

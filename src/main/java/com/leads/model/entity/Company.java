@@ -72,4 +72,16 @@ public class Company {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    /**
+     * Module 06 P1 (V70): a random, unique 6-character code printed in document numbers instead of
+     * the internal id (flag documents.company_code_prefix). Generated once; never derived from the id.
+     */
+    @Column(unique = true, length = 12)
+    private String documentCode;
+
+    @PrePersist
+    void defaultDocumentCode() {
+        if (documentCode == null || documentCode.isBlank()) documentCode = com.leads.service.DocumentNumberService.randomCompanyCode();
+    }
 }

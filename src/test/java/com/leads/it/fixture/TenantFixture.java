@@ -109,6 +109,24 @@ public class TenantFixture {
         });
     }
 
+    /** Another lead of an existing customer, assigned to {@code assignee} (null = unassigned). Module 06. */
+    public Long freshLeadForCustomer(Slot s, Long customerId, Long assignee) {
+        return inTx(() -> {
+            Lead lead = newLead(s, customerId);
+            if (assignee != null) lead.setAssignedTo(em.getReference(User.class, assignee));
+            return lead.getId();
+        });
+    }
+
+    /**
+     * Sets a lead's created_at the way the app stores times (Hibernate binding, same JDBC timezone
+     * handling as @CreationTimestamp), so date-filter tests compare like with like. Module 06.
+     */
+    public void setLeadCreatedAt(Long leadId, java.time.LocalDateTime serverWallClock) {
+        inTx(() -> em.createNativeQuery("UPDATE leads SET created_at = :t WHERE id = :id")
+                .setParameter("t", serverWallClock).setParameter("id", leadId).executeUpdate());
+    }
+
     public Long customerOfLead(Long leadId) { return inTx(() -> em.find(Lead.class, leadId).getCustomer().getId()); }
 
     /** A fresh conversation in {@code s}: its agent and its linked lead are both optional. */

@@ -18,6 +18,8 @@ import static org.mockito.Mockito.*;
 class PendingPurposeTest {
     @Mock TenantAccess access;
     @Mock LeadRepository leads;
+    /** Module 06: date bounds go through the company clock (a real one; the server zone). */
+    @org.mockito.Spy CompanyClock companyClock = new CompanyClock(java.time.Clock.system(CompanyClock.SERVER_ZONE));
     @InjectMocks LeadService service;
     @Captor ArgumentCaptor<Specification<Lead>> specification;
 

@@ -70,7 +70,8 @@ public class LeadController {
     }
 
     @PostMapping("/assign")
-    @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('LEADS:ASSIGN')")
+    // LEADS:EDIT lets an OWN agent self-claim (module 06 P1); assigning anyone else still needs LEADS:ASSIGN (checked in the service).
+    @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('LEADS:ASSIGN') or hasAuthority('LEADS:EDIT')")
     @Operation(summary = "Assign or Reassign Leads", description = "Assigns one or multiple leads to an agent with activity audit log.")
     public ResponseEntity<Void> assignLeads(@Valid @RequestBody LeadAssignRequest req) {
         leadService.assignLeads(req);
