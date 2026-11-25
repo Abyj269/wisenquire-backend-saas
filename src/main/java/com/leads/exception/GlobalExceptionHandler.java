@@ -148,6 +148,26 @@ public class GlobalExceptionHandler {
         return respond(ErrorCode.VALIDATION_FAILED, message, Map.of("fields", fields));
     }
 
+    /**
+     * Malformed requests Spring MVC rejects before the controller runs (missing or mistyped query
+     * parameter, unreadable JSON, missing multipart part). They are the caller's mistake: 400, not 500.
+     */
+    @ExceptionHandler({
+            org.springframework.web.bind.ServletRequestBindingException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class,
+            org.springframework.web.multipart.support.MissingServletRequestPartException.class
+    })
+    public ResponseEntity<Map<String, Object>> handleBadRequest(Exception ex) {
+        return respond(ErrorCode.VALIDATION_FAILED, "The request is incomplete or malformed.", Map.of());
+    }
+
+    /** Wrong HTTP method for an existing path: 405, not 500. */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotAllowed(org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(405).body(ErrorBodies.of(ErrorCode.VALIDATION_FAILED, "This action is not supported here.", Map.of()));
+    }
+
     /** A permission denial (@PreAuthorize, access.permission): always 403, whatever the flag. */
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {

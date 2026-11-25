@@ -55,7 +55,7 @@ public class BroadcastSchedulerService {
     private final BroadcastRepository broadcastRepo;
     private final BroadcastService broadcastService;
 
-    @Scheduled(fixedDelayString = "${broadcast.scheduler.check-ms:60000}")
+    @Scheduled(fixedDelayString = "${broadcast.scheduler.check-ms:60000}", initialDelayString = "${broadcast.scheduler.initial-delay-ms:0}")
     @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.BROADCAST_SCHEDULER, lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
     public void processScheduledBroadcasts() {
         com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.BROADCAST_SCHEDULER);

@@ -16,6 +16,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(false)
+                // Step 5.3: let a cross-origin frontend read these (retry countdown, trace id in error reports).
+                .exposedHeaders("Retry-After", "X-Request-Id")
                 .maxAge(3600);
     }
 }

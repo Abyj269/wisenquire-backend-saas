@@ -60,6 +60,9 @@ class D12MappingTest {
     static class Thrower {
         @GetMapping("/throw/{name}")
         void raise(@PathVariable String name) { throw THROWERS.get(name).get(); }
+
+        @GetMapping("/needs-param")
+        void needsParam(@org.springframework.web.bind.annotation.RequestParam Long companyId) { }
     }
 
     static Stream<Arguments> mappings() {
@@ -92,6 +95,13 @@ class D12MappingTest {
                 .andExpect(jsonPath("$.message").isString())
                 .andExpect(jsonPath("$.details").isMap())
                 .andExpect(jsonPath("$.traceId").hasJsonPath());
+    }
+
+    @Test
+    void malformedRequestsAre400Not500() throws Exception {
+        mvc(false).perform(get("/needs-param")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        mvc(false).perform(get("/needs-param").param("companyId", "not-a-number")).andExpect(status().isBadRequest());
+        mvc(false).perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/needs-param")).andExpect(status().isMethodNotAllowed());
     }
 
     @Test

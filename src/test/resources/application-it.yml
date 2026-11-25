@@ -30,8 +30,11 @@ ads:
 broadcast:
   scheduler:
     check-ms: 86400000
+    # No start-up run in tests (TwoInstancesShedLockIT triggers the jobs itself). Default 0 = as before.
+    initial-delay-ms: 86400000
 whatsapp:
   receipts:
+    initial-delay-ms: 86400000
     reconcile-ms: 86400000
     cleanup-ms: 86400000
 

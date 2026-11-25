@@ -47,7 +47,7 @@ public class WhatsAppReceiptService {
                 phoneNumberId, receipt.getId(), status, timestamp, code, detail == null ? null : detail.substring(0, Math.min(255, detail.length())));
     }
 
-    @Scheduled(fixedDelayString = "${whatsapp.receipts.reconcile-ms:2000}")
+    @Scheduled(fixedDelayString = "${whatsapp.receipts.reconcile-ms:2000}", initialDelayString = "${whatsapp.receipts.initial-delay-ms:0}")
     @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.WHATSAPP_RECEIPT_RECONCILE, lockAtMostFor = "PT1M", lockAtLeastFor = "PT1S")
     @Transactional
     public void reconcile() {
@@ -93,7 +93,7 @@ public class WhatsAppReceiptService {
         return next == MessageStatus.SENT || next == MessageStatus.FAILED;
     }
 
-    @Scheduled(fixedDelayString = "${whatsapp.receipts.cleanup-ms:3600000}")
+    @Scheduled(fixedDelayString = "${whatsapp.receipts.cleanup-ms:3600000}", initialDelayString = "${whatsapp.receipts.initial-delay-ms:0}")
     @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.WHATSAPP_RECEIPT_CLEANUP, lockAtMostFor = "PT30M", lockAtLeastFor = "PT1M")
     @Transactional
     public void cleanup() {

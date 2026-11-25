@@ -533,6 +533,7 @@ public class TenantManagementService {
                 .roleLevel(r.getRoleLevel())
                 .description(r.getDescription())
                 .isSystemRole(r.getIsSystemRole())
+                .dataScope(r.getDataScope() == null ? com.leads.model.enums.DataScope.LEVEL : r.getDataScope())
                 .permissions(pList)
                 .build();
     }

@@ -25,9 +25,10 @@ class AuditLogIT extends AbstractIntegrationTest {
     }
 
     private int create(char org, Long companyId, String trace) throws Exception {
-        return mvc.perform(post("/settings/saved-replies").header("Authorization", "Bearer " + fixture.token(org, Persona.ORG_ADMIN))
+        return mvc.perform(post("/settings/saved-replies").param("companyId", String.valueOf(companyId))
+                        .header("Authorization", "Bearer " + fixture.token(org, Persona.ORG_ADMIN))
                         .header("X-Request-Id", trace).contentType("application/json")
-                        .content("{\"companyId\":" + companyId + ",\"title\":\"IT audit\",\"body\":\"Hello\"}"))
+                        .content("{\"title\":\"IT audit\",\"body\":\"Hello\"}"))
                 .andReturn().getResponse().getStatus();
     }
 
