@@ -11,7 +11,7 @@ class GettingStartedTest {
     @Test void welcomeSeenIsAccountSpecificAndIdempotent() {
         var access = mock(TenantAccess.class); var users = mock(UserRepository.class);
         var user = User.builder().id(42L).build(); when(access.actor()).thenReturn(user);
-        var controller = new AuthController(null,access,users);
+        var controller = new AuthController(null,access,users,null);
         assertFalse(user.isGettingStartedSeen());
         controller.markGettingStartedSeen(); controller.markGettingStartedSeen();
         assertTrue(user.isGettingStartedSeen()); verify(users,times(2)).save(user);
@@ -19,7 +19,7 @@ class GettingStartedTest {
     @Test void unauthenticatedActorCannotMarkAUserSeen() {
         var access = mock(TenantAccess.class); var users = mock(UserRepository.class);
         when(access.actor()).thenThrow(new AccessDeniedException("Denied"));
-        assertThrows(AccessDeniedException.class,()->new AuthController(null,access,users).markGettingStartedSeen());
+        assertThrows(AccessDeniedException.class,()->new AuthController(null,access,users,null).markGettingStartedSeen());
         verifyNoInteractions(users);
     }
 }

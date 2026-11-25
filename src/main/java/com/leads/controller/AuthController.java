@@ -24,6 +24,7 @@ public class AuthController {
     private final AuthService authService;
     private final com.leads.service.TenantAccess access;
     private final com.leads.repository.UserRepository userRepository;
+    private final com.leads.config.ClientIpResolver clientIp;
 
     @PostMapping("/getting-started/seen")
     @org.springframework.security.access.prepost.PreAuthorize("isAuthenticated()")
@@ -47,8 +48,10 @@ public class AuthController {
     }
 
     private String resolveClientIp(HttpServletRequest request) {
-        // The servlet remote address is trusted; arbitrary forwarding headers are not.
-        return request.getRemoteAddr();
+        // Security hotfix (module 02): NOT request.getRemoteAddr(), which the framework forward-headers
+        // strategy rewrites from the client-controlled left-most X-Forwarded-For entry. ClientIpResolver
+        // uses the TCP peer, or the right-most untrusted entry behind a trusted proxy.
+        return clientIp.resolve(request);
     }
 
     @GetMapping("/profile")

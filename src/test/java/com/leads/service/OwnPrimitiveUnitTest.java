@@ -79,7 +79,7 @@ class OwnPrimitiveUnitTest {
     @Test
     void auditMasksSecretsAndCutsLongValues() {
         AuditAspect aspect = new AuditAspect(null, mock(org.springframework.transaction.PlatformTransactionManager.class),
-                new com.fasterxml.jackson.databind.ObjectMapper(), true);
+                new com.fasterxml.jackson.databind.ObjectMapper(), true, null);
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("name", "Branch A");
         body.put("password", "hunter2");

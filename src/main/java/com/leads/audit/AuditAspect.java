@@ -47,7 +47,7 @@ import java.util.Set;
  *       action is NOT affected.</li>
  *   <li>Kill switch: {@code app.audit.enabled=false}.</li>
  * </ul>
- * The IP is {@code request.getRemoteAddr()}: see the module 02 open finding about X-Forwarded-For.
+ * The IP comes from {@link com.leads.config.ClientIpResolver} (not spoofable via X-Forwarded-For).
  */
 @Slf4j
 @Aspect
@@ -65,9 +65,11 @@ public class AuditAspect {
     private final TransactionTemplate newTx;
     private final ObjectMapper json;
     private final boolean enabled;
+    private final com.leads.config.ClientIpResolver clientIp;
 
     public AuditAspect(JdbcTemplate jdbc, PlatformTransactionManager txm, ObjectMapper json,
-                       @Value("${app.audit.enabled:true}") boolean enabled) {
+                       @Value("${app.audit.enabled:true}") boolean enabled, com.leads.config.ClientIpResolver clientIp) {
+        this.clientIp = clientIp;
         this.jdbc = jdbc;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -130,7 +132,7 @@ public class AuditAspect {
                     "INSERT INTO audit_log (organization_id, actor_user_id, action, entity_type, entity_id, after_json, outcome, http_status, ip, trace_id)"
                             + " VALUES (?,?,?,?,?,?,?,?,?,?)",
                     org, actor, truncate(action, 200), audited.entity(), fEntityId, fBody, outcome, status,
-                    truncate(request.getRemoteAddr(), 64), trace));
+                    truncate(clientIp == null ? request.getRemoteAddr() : clientIp.resolve(request), 64), trace));
         } catch (RuntimeException e) {
             log.error("Could not write the audit record for {} {}", request.getMethod(), request.getRequestURI(), e);
         }
