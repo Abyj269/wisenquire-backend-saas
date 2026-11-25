@@ -28,7 +28,11 @@ public final class EndpointSpec {
         /** Needs company-wide scope: branch-level personas are denied even at home. */
         COMPANY_WIDE,
         /** Takes no ids at all (the caller's own context, e.g. /me/...): ANON and ALLOWED rows only. */
-        SELF
+        SELF,
+        /** Scoped by organization only (roles, org settings): X-ORG, but no X-COMPANY / X-BRANCH. */
+        ORG,
+        /** Platform super admin only: every tenant persona is refused (CFG_SCOPE rows), no ALLOWED row. */
+        PLATFORM
     }
 
     @FunctionalInterface
@@ -74,6 +78,12 @@ public final class EndpointSpec {
     /** No ALLOWED control row, with the reason (e.g. the fixture cannot make the call succeed). */
     public EndpointSpec noAllowedRow(String reason) {
         this.noAllowedReason = reason;
+        return this;
+    }
+
+    /** CFG_SCOPE rows: each persona is refused on its own (home) data because it lacks the right. */
+    public EndpointSpec deniedFor(Persona... refused) {
+        for (Persona p : refused) extra.add(new Row(this, RowType.CFG_SCOPE, 'A', p, Slot.A1a, Outcome.DENIED, request, null));
         return this;
     }
 

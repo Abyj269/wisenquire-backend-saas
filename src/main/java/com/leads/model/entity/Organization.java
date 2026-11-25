@@ -22,8 +22,13 @@ public class Organization {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 150)
+    /** Display name. Not unique since V65 (F-6): two tenants may share a name; the slug is unique. */
+    @Column(nullable = false, length = 150)
     private String name;
+
+    /** Module 03 (V65): unique, URL-safe, generated from the code, and stable once set. */
+    @Column(nullable = false, unique = true, length = 80)
+    private String slug;
 
     @Column(nullable = false, unique = true, length = 50)
     private String code;
@@ -66,4 +71,10 @@ public class Organization {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    /** Fallback for inserts that do not set a slug (fixtures, seed): the code, slugified. */
+    @PrePersist
+    void defaultSlug() {
+        if (slug == null || slug.isBlank()) slug = com.leads.service.OrganizationSlugs.slugify(code);
+    }
 }

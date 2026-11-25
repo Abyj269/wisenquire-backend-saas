@@ -64,7 +64,13 @@ class PersonaFixtureIT extends AbstractIntegrationTest {
                     switch (p) {
                         case ORG_ADMIN -> assertTrue(u.getAllowedCompanies().isEmpty() && u.getAllowedBranches().isEmpty());
                         case COMPANY_MGR -> assertEquals(Set.of(fixture.company(home)), ids(u.getAllowedCompanies()));
-                        default -> assertEquals(Set.of(fixture.branch(home)), ids(u.getAllowedBranches()));
+                        // The home branch, plus only module 03's fresh branches (granted so tenant-admin
+                        // ALLOWED rows can act on them): never another fixture slot's branch.
+                        default -> {
+                            assertTrue(ids(u.getAllowedBranches()).contains(fixture.branch(home)), p + " home branch");
+                            u.getAllowedBranches().stream().filter(b -> !b.getId().equals(fixture.branch(home)))
+                                    .forEach(b -> assertTrue(b.getCode().startsWith("IT-FB-"), p + " has extra branch " + b.getCode()));
+                        }
                     }
                 }
             }

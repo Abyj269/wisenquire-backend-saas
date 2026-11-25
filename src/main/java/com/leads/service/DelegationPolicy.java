@@ -13,6 +13,11 @@ import java.util.*;
 public class DelegationPolicy {
     private final TenantAccess access;
     public void role(Long orgId, RoleLevel level, List<RolePermissionDto> permissions, Role existing) {
+        role(orgId, level, permissions, existing, null);
+    }
+
+    /** @param requestedScope the data scope the role will have after the change; null = unchanged / LEVEL for a new role. */
+    public void role(Long orgId, RoleLevel level, List<RolePermissionDto> permissions, Role existing, com.leads.model.enums.DataScope requestedScope) {
         User actor = access.actor();
         if (access.isSuper(actor)) return;
         access.organization(orgId);
@@ -21,8 +26,8 @@ public class DelegationPolicy {
             || existing.getId().equals(actor.getRole().getId())))) throw denied();
         // D14: an OWN creator may not create or edit a LEVEL role (that would be broader than its
         // own scope). No API sets a role's scope yet, so a new role is LEVEL.
-        com.leads.model.enums.DataScope requested = existing != null && existing.getDataScope() != null
-                ? existing.getDataScope() : com.leads.model.enums.DataScope.LEVEL;
+        com.leads.model.enums.DataScope requested = requestedScope != null ? requestedScope
+                : existing != null && existing.getDataScope() != null ? existing.getDataScope() : com.leads.model.enums.DataScope.LEVEL;
         if (actor.getRole().getDataScope() == com.leads.model.enums.DataScope.OWN && requested == com.leads.model.enums.DataScope.LEVEL) throw denied();
         if (permissions != null) for (RolePermissionDto p : permissions) {
             String module = p.getModuleName().toUpperCase(Locale.ROOT);

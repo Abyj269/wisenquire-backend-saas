@@ -25,6 +25,8 @@ import java.util.function.Supplier;
 public class TenantFixture {
 
     private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS"};
+    /** Tenant-admin rights (module 03): managers have them; agents do not, like the real "Agent" template. */
+    private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT"};
 
     private final EntityManager em;
     private final TransactionTemplate tx;
@@ -46,6 +48,7 @@ public class TenantFixture {
     private final Map<Slot, Long> messageId = new EnumMap<>(Slot.class);
     private final Map<Slot, Long> broadcastId = new EnumMap<>(Slot.class);
     private final Map<String, Long> userId = new HashMap<>();
+    private final Map<String, Long> roleId = new HashMap<>();
     private final Map<String, String> token = new HashMap<>();
 
     public TenantFixture(EntityManager em, PlatformTransactionManager txm, JwtTokenProvider jwt) {
@@ -75,6 +78,8 @@ public class TenantFixture {
     public Long source(Slot s) { return ensureBuilt().sourceId.get(s.company()); }
     public Long lostReason(Slot s) { return ensureBuilt().lostReasonId.get(s.company()); }
     public Long user(char org, Persona p) { return ensureBuilt().userId.get(org + ":" + p); }
+    /** The fixture role a persona of {@code org} holds. */
+    public Long role(char org, Persona p) { return ensureBuilt().roleId.get(org + ":" + p); }
     public String token(char org, Persona p) { return ensureBuilt().token.get(org + ":" + p); }
 
     /** The slot a persona "lives" in: its own company x1 and branch x1a. */
@@ -143,6 +148,67 @@ public class TenantFixture {
         });
     }
 
+    // ---- module 03: fresh tenant-admin records for rows that write ------------------------------
+
+    /** A company in {@code s}'s organization (with the app's default lead settings not needed by tests). */
+    public Long freshCompany(Slot s) {
+        return inTx(() -> {
+            int n = seq.incrementAndGet();
+            Company c = Company.builder().organization(em.getReference(Organization.class, orgId.get(s.org())))
+                    .name("IT Fresh Company " + n).code("IT-FC-" + n).build();
+            return persist(c).getId();
+        });
+    }
+
+    /** A branch in {@code s}'s company; {@code active = false} for reactivate rows. */
+    public Long freshBranch(Slot s, boolean active) {
+        return inTx(() -> {
+            int n = seq.incrementAndGet();
+            Branch b = persist(Branch.builder().company(em.getReference(Company.class, companyId.get(s.company())))
+                    .name("IT Fresh Branch " + n).code("IT-FB-" + n).isActive(active).build());
+            // In an org's home slot (A1a, B1a, S1a, P1a) the branch-level personas get the new branch,
+            // so their ALLOWED rows can act on it; elsewhere (A1b, A2a) it stays outside their scope.
+            if (s == home(s.org())) {
+                for (Persona p : Persona.values()) {
+                    Long uid = userId.get(s.org() + ":" + p);
+                    if (p.level == RoleLevel.BRANCH && uid != null) em.find(User.class, uid).getAllowedBranches().add(b);
+                }
+            }
+            return b.getId();
+        });
+    }
+
+    /** A BRANCH-level role in {@code s}'s organization with LEADS view only. */
+    public Long freshRole(Slot s) {
+        return inTx(() -> {
+            Role r = Role.builder().organization(em.getReference(Organization.class, orgId.get(s.org())))
+                    .roleName("IT Fresh Role " + seq.incrementAndGet()).roleLevel(RoleLevel.BRANCH).build();
+            r.getPermissions().add(RolePermission.builder().role(r).moduleName("LEADS").canView(true).build());
+            return persist(r).getId();
+        });
+    }
+
+    /** An agent-like user in branch {@code s} (role = that org's AGENT_OWN_1 role). */
+    public Long freshUser(Slot s) {
+        return inTx(() -> {
+            User u = User.builder().organization(em.getReference(Organization.class, orgId.get(s.org())))
+                    .role(em.getReference(Role.class, roleId.get(s.org() + ":" + Persona.AGENT_OWN_1)))
+                    .email("fresh" + seq.incrementAndGet() + "@org-" + Character.toLowerCase(s.org()) + ".it.test")
+                    .password("{noop}not-used").firstName("Fresh").lastName("User").build();
+            u.getAllowedCompanies().add(em.getReference(Company.class, companyId.get(s.company())));
+            u.getAllowedBranches().add(em.getReference(Branch.class, branchId.get(s)));
+            return persist(u).getId();
+        });
+    }
+
+    public Long freshTrustedIp(Slot s) {
+        return inTx(() -> persist(BranchTrustedIp.builder().branch(em.getReference(Branch.class, branchId.get(s)))
+                .ipAddress("198.51.100." + (seq.incrementAndGet() % 250)).label("IT").build()).getId());
+    }
+
+    /** A unique email for create-user rows. */
+    public String freshEmail(Slot s) { return "new" + seq.incrementAndGet() + "@org-" + Character.toLowerCase(s.org()) + ".it.test"; }
+
     public boolean exists(Class<?> type, Long id) { return Boolean.TRUE.equals(tx.execute(st -> em.find(type, id) != null)); }
 
     public <T> T inTx(Supplier<T> work) { ensureBuilt(); return tx.execute(st -> work.get()); }
@@ -162,7 +228,7 @@ public class TenantFixture {
             persist(org);
             orgId.put(o, org.getId());
             Map<Persona, Role> roles = new EnumMap<>(Persona.class);
-            for (Persona p : Persona.values()) roles.put(p, role(org, p));
+            for (Persona p : Persona.values()) { roles.put(p, role(org, p)); roleId.put(o + ":" + p, roles.get(p).getId()); }
 
             for (int c = 1; c <= (stateOrg ? 1 : 2); c++) {
                 String code = o + "" + c;
@@ -207,7 +273,9 @@ public class TenantFixture {
         Role role = Role.builder().organization(org).roleName("IT " + p + " " + org.getCode()).roleLevel(p.level).build();
         // D14: the agents' role is OWN. Inert unless own_scope.enforced is on for the org (OwnScopePrimitiveIT).
         if (p == Persona.AGENT_OWN_1 || p == Persona.AGENT_OWN_2) role.setDataScope(DataScope.OWN);
-        for (String module : MODULES) {
+        java.util.List<String> modules = new java.util.ArrayList<>(java.util.List.of(MODULES));
+        if (p != Persona.AGENT_OWN_1 && p != Persona.AGENT_OWN_2) modules.addAll(java.util.List.of(ADMIN_MODULES));
+        for (String module : modules) {
             role.getPermissions().add(RolePermission.builder().role(role).moduleName(module)
                     .canView(true).canAdd(true).canEdit(true).canDelete(true).canExport(true)
                     .canApprove(true).canAssign(true).canPrint(true).build());

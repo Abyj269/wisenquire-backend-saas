@@ -29,6 +29,7 @@ public class TenantManagementService {
     private final PasswordEncoder passwordEncoder;
     private final LeadSettingsService leadSettingsService;
     private final BranchTrustedIpRepository branchTrustedIpRepo;
+    private final CompanyTimezones timezones;
 
     // --- Organizations ---
     @Transactional(readOnly = true)
@@ -43,6 +44,7 @@ public class TenantManagementService {
         Organization org = Organization.builder()
                 .name(dto.getName())
                 .code(dto.getCode().toUpperCase())
+                .slug(OrganizationSlugs.unique(dto.getCode(), orgRepo::existsBySlug))
                 .subscriptionPlan(dto.getSubscriptionPlan() != null ? dto.getSubscriptionPlan() : "ENTERPRISE")
                 .logoUrl(dto.getLogoUrl())
                 .isActive(dto.getIsActive() != null ? dto.getIsActive() : true)
@@ -103,6 +105,7 @@ public class TenantManagementService {
         Organization org = orgRepo.findById(dto.getOrganizationId())
                 .orElseThrow(() -> new IllegalArgumentException("Organization not found: " + dto.getOrganizationId()));
 
+        timezones.check(org.getId(), dto.getTimezone());
         Company company = Company.builder()
                 .organization(org)
                 .name(dto.getName())
@@ -134,6 +137,8 @@ public class TenantManagementService {
         }
         company.setLogoUrl(dto.getLogoUrl());
         if (dto.getTimezone() != null) {
+            // Only a CHANGE is checked: a legacy zone kept as it is must not block other edits.
+            if (!dto.getTimezone().equals(company.getTimezone())) timezones.check(company.getOrganization().getId(), dto.getTimezone());
             company.setTimezone(dto.getTimezone());
         }
         if (dto.getIsActive() != null) {
@@ -216,11 +221,11 @@ public class TenantManagementService {
      */
     @Transactional
     public BranchDto setBranchActive(Long id, boolean active) {
-        Branch branch = branchRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + id));
+        // Module 03 P1: missing and out-of-scope branches answer the same (D12 flag), via TenantAccess.
+        Branch branch = access.find(Branch.class, id);
         access.company(branch.getCompany().getId());
         if (!access.canBranch(branch)) {
-            throw new org.springframework.security.access.AccessDeniedException("This record is outside your permitted scope.");
+            throw new com.leads.exception.ScopeDeniedException("This record is outside your permitted scope.");
         }
         branch.setIsActive(active);
         return mapBranchToDto(branchRepo.save(branch));
@@ -279,7 +284,7 @@ public class TenantManagementService {
 
     @Transactional
     public RoleDto createRole(RoleDto dto) {
-        delegation.role(dto.getOrganizationId(), dto.getRoleLevel(), dto.getPermissions(), null);
+        delegation.role(dto.getOrganizationId(), dto.getRoleLevel(), dto.getPermissions(), null, dto.getDataScope());
         Organization org = dto.getOrganizationId() != null ? orgRepo.findById(dto.getOrganizationId()).orElse(null) : null;
 
         Role role = Role.builder()
@@ -288,6 +293,7 @@ public class TenantManagementService {
                 .roleLevel(dto.getRoleLevel())
                 .description(dto.getDescription())
                 .isSystemRole(false)
+                .dataScope(dto.getDataScope() != null ? dto.getDataScope() : com.leads.model.enums.DataScope.LEVEL)
                 .build();
 
         if (dto.getPermissions() != null) {
@@ -315,10 +321,11 @@ public class TenantManagementService {
 
     @Transactional
     public RoleDto updateRole(Long id, RoleDto dto) {
-        Role role = roleRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + id));
+        Role role = access.find(Role.class, id);
+        // Scope first (module 03 P1): another org's role is refused before anything is read from it.
+        if (role.getOrganization() != null) access.organization(role.getOrganization().getId());
 
-        delegation.role(role.getOrganization() != null ? role.getOrganization().getId() : null, dto.getRoleLevel() != null ? dto.getRoleLevel() : role.getRoleLevel(), dto.getPermissions(), role);
+        delegation.role(role.getOrganization() != null ? role.getOrganization().getId() : null, dto.getRoleLevel() != null ? dto.getRoleLevel() : role.getRoleLevel(), dto.getPermissions(), role, dto.getDataScope());
         role.setRoleName(dto.getRoleName());
         role.setDescription(dto.getDescription());
         // A seeded system role's level is load-bearing for permission checks
@@ -326,6 +333,9 @@ public class TenantManagementService {
         // editable, but its level doesn't.
         if (!Boolean.TRUE.equals(role.getIsSystemRole()) && dto.getRoleLevel() != null) {
             role.setRoleLevel(dto.getRoleLevel());
+        }
+        if (!Boolean.TRUE.equals(role.getIsSystemRole()) && dto.getDataScope() != null) {
+            role.setDataScope(dto.getDataScope());
         }
 
         if (dto.getPermissions() != null) {
@@ -356,7 +366,32 @@ public class TenantManagementService {
     @Transactional(readOnly = true)
     public List<UserDto> getUsersByOrg(Long orgId) {
         access.organizationAdmin(orgId);
-        return userRepo.findByOrganizationId(orgId).stream().map(this::mapUserToDto).collect(Collectors.toList());
+        return userRepo.findByOrganizationId(orgId).stream().map(this::mapUserToDto).map(this::forCaller).collect(Collectors.toList());
+    }
+
+    /** Module 03 P1: a role for a user, loaded through TenantAccess (missing and foreign look the same). */
+    private Role scopedRole(Long roleId) {
+        Role role = access.find(Role.class, roleId);
+        if (role.getOrganization() != null && !access.isSuper(access.actor())) access.organization(role.getOrganization().getId());
+        return role;
+    }
+
+    /**
+     * Module 03 P1: callers without user-management rights (assignment pickers: agents, managers with
+     * LEADS:VIEW, automation builders) get only what a picker needs: id, names, role name, active.
+     * Email, phone, super-admin and scope stay with ORG admins, the super admin and USER_MANAGEMENT:VIEW.
+     */
+    private UserDto forCaller(UserDto full) {
+        if (canSeeFullUsers()) return full;
+        return UserDto.builder().id(full.getId()).firstName(full.getFirstName()).lastName(full.getLastName())
+                .fullName(full.getFullName()).roleName(full.getRoleName()).isActive(full.getIsActive()).build();
+    }
+
+    private boolean canSeeFullUsers() {
+        User actor = access.actor();
+        if (access.isSuper(actor) || actor.getRole().getRoleLevel() == RoleLevel.ORGANIZATION) return true;
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("USER_MANAGEMENT:VIEW"));
     }
 
     @Transactional(readOnly = true)
@@ -370,14 +405,15 @@ public class TenantManagementService {
         return userRepo.findByAllowedCompanyId(companyId).stream()
                 .filter(u -> permittedBranches == null
                         || u.getAllowedBranches().stream().anyMatch(b -> permittedBranches.contains(b.getId())))
-                .map(this::mapUserToDto).collect(Collectors.toList());
+                .map(this::mapUserToDto).map(this::forCaller).collect(Collectors.toList());
     }
 
     @Transactional
     public UserDto createUser(UserCreateRequest req) {
+        // Scope first (module 03 P1): the target organization, then the role, before anything else.
+        if (!access.isSuper(access.actor())) access.organization(req.getOrganizationId());
         Organization org = req.getOrganizationId() != null ? orgRepo.findById(req.getOrganizationId()).orElse(null) : null;
-        Role role = roleRepo.findById(req.getRoleId())
-                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + req.getRoleId()));
+        Role role = scopedRole(req.getRoleId());
 
         Set<Company> companies = new LinkedHashSet<>();
         if (req.getAllowedCompanyIds() != null) {
@@ -411,10 +447,21 @@ public class TenantManagementService {
 
     @Transactional
     public UserDto updateUser(Long id, UserUpdateRequest req) {
-        User user = userRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
-        Role role = roleRepo.findById(req.getRoleId())
-                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + req.getRoleId()));
+        // Scope first (module 03 P1): the target user's organization is checked before the role or
+        // the scope mappings are loaded. Missing and foreign users get the same answer (D12 flag).
+        User user = access.find(User.class, id);
+        if (!access.isSuper(access.actor())) {
+            if (user.getOrganization() == null) throw new com.leads.exception.ScopeDeniedException("This record is outside your permitted scope.");
+            access.organization(user.getOrganization().getId());
+            // ...and where the user is NOW, not only where the request moves them: a company manager
+            // must not pull a user out of another company (or a branch manager out of another branch).
+            User actor = access.actor();
+            if (user.getAllowedCompanies().stream().anyMatch(c -> !access.canCompany(actor, c))
+                    || user.getAllowedBranches().stream().anyMatch(b -> !access.canBranch(b))) {
+                throw new com.leads.exception.ScopeDeniedException("This record is outside your permitted scope.");
+            }
+        }
+        Role role = scopedRole(req.getRoleId());
 
         Set<Company> companies = new LinkedHashSet<>();
         if (req.getAllowedCompanyIds() != null) {
@@ -464,6 +511,7 @@ public class TenantManagementService {
                 .id(o.getId())
                 .name(o.getName())
                 .code(o.getCode())
+                .slug(o.getSlug())
                 .subscriptionPlan(o.getSubscriptionPlan())
                 .logoUrl(o.getLogoUrl())
                 .isActive(o.getIsActive())

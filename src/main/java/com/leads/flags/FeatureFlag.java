@@ -17,6 +17,8 @@ public enum FeatureFlag {
     ERRORS_UNIFORM_NOT_FOUND("errors.uniform_not_found", false, "module-01", "2027-06-30"),
     /** Step 5.3 (FE): global D12 error UI (403 toast, retry countdown, tenant-state pages, upgrade modal). */
     ERRORS_UI_HANDLER("errors.ui_handler", true, "module-01", "2027-06-30"),
+    /** Module 03 P1 (D15): companies limited to the 7 year-1 timezones (backend + frontend list). */
+    TENANT_TIMEZONE_ALLOWLIST("tenant.timezone_allowlist", true, "module-03", "2027-12-31"),
     OWN_SCOPE_ENFORCED("own_scope.enforced", true, "module-01", "2027-12-31"),
     OWN_SCOPE_INCLUDE_UNASSIGNED("own_scope.include_unassigned", true, "module-01", "2027-12-31"),
     AUTH_SUBJECT_USER_ID("auth.subject_user_id", false, "module-02", "2027-06-30"),

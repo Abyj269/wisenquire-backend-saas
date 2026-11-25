@@ -17,5 +17,7 @@ public enum RowType {
     /** Parked until D14 (roles.data_scope, Part B item 8). */
     OWN_RECORD, OWN_LIST, OWN_AGG, OWN_WRITE,
     /** ORG_ADMIN of org S (SUSPENDED) / P (PAST_DUE past grace) on its own branch: writes blocked, reads allowed. */
-    STATE
+    STATE,
+    /** A persona without the right, on its OWN data (e.g. an agent creating users, a branch manager reading the org summary). */
+    CFG_SCOPE
 }

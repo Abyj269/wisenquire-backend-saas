@@ -31,6 +31,7 @@ public final class Matrix {
         all.addAll(ReportsRows.specs());
         all.addAll(MeRows.specs());
         all.addAll(AuthRows.specs());
+        all.addAll(TenantRows.specs());
         return all;
     }
 
@@ -39,6 +40,11 @@ public final class Matrix {
         for (EndpointSpec spec : specs()) {
             List<Row> rows = new ArrayList<>();
             rows.add(new Row(spec, RowType.ANON, 'A', null, Slot.A1a, Outcome.UNAUTHENTICATED, spec.request, null));
+            if (spec.scope == EndpointSpec.Scope.PLATFORM) {
+                for (Persona p : Persona.values()) rows.add(new Row(spec, RowType.CFG_SCOPE, 'A', p, Slot.A1a, Outcome.DENIED, spec.request, null));
+                rows.forEach(denials::add);
+                continue;
+            }
             if (spec.scope == EndpointSpec.Scope.SELF) {
                 for (Persona p : spec.personas) rows.add(new Row(spec, RowType.ALLOWED, 'A', p, Slot.A1a, Outcome.ALLOWED, spec.request, null));
                 rows.forEach(r -> (r.expected() == Outcome.ALLOWED ? allowed : denials).add(r));
@@ -53,7 +59,7 @@ public final class Matrix {
                 }
                 rows.add(new Row(spec, RowType.X_ORG, 'A', p, Slot.B1a, Outcome.DENIED, spec.request, null));
             }
-            if (spec.personas.contains(Persona.COMPANY_MGR)) {
+            if (spec.personas.contains(Persona.COMPANY_MGR) && spec.scope != EndpointSpec.Scope.ORG) {
                 rows.add(new Row(spec, RowType.X_COMPANY, 'A', Persona.COMPANY_MGR, Slot.A2a, Outcome.DENIED, spec.request, null));
             }
             if (spec.scope == EndpointSpec.Scope.BRANCH && spec.personas.contains(Persona.BRANCH_MGR)) {

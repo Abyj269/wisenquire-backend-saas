@@ -68,6 +68,9 @@ public class TenantAccess {
         Organization org = find(Organization.class, id);
         User user = actor();
         if (!isSuper(user) && (user.getOrganization() == null || !id.equals(user.getOrganization().getId()))) throw denied();
+        // D12 tenant state also on organization-level writes (companies, roles, users, the org itself),
+        // not only through company() (found by the module 03 STATE rows). Super admin and system scope excepted.
+        if (SYSTEM_COMPANY.get() == null && !isSuper(user)) statusPolicy.enforce(org);
         return org;
     }
     public void organizationAdmin(Long id) {

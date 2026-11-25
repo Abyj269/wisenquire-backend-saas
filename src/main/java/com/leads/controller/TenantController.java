@@ -60,14 +60,14 @@ public class TenantController {
 
     @PostMapping("/companies")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('ROLE_ORGANIZATION') or hasAuthority('COMPANY_BRANCH_SETTINGS:ADD')")
-    @Operation(summary = "Create Company")
+    @Operation(summary = "Create Company", description = "With flag tenant.timezone_allowlist on for the org, a new or changed timezone must be one of Asia/Kolkata, Asia/Dubai, Asia/Muscat, Asia/Riyadh, Asia/Qatar, Asia/Bahrain, Asia/Kuwait (400 VALIDATION_FAILED, details.allowed).")
     public ResponseEntity<CompanyDto> createCompany(@Valid @RequestBody CompanyDto dto) {
         return ResponseEntity.ok(tenantService.createCompany(dto));
     }
 
     @PutMapping("/companies/{id}")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('ROLE_ORGANIZATION') or hasAuthority('COMPANY_BRANCH_SETTINGS:EDIT')")
-    @Operation(summary = "Update Company Details")
+    @Operation(summary = "Update Company Details", description = "With flag tenant.timezone_allowlist on for the org, a new or changed timezone must be one of Asia/Kolkata, Asia/Dubai, Asia/Muscat, Asia/Riyadh, Asia/Qatar, Asia/Bahrain, Asia/Kuwait (400 VALIDATION_FAILED, details.allowed). An unchanged legacy zone is accepted.")
     public ResponseEntity<CompanyDto> updateCompany(@PathVariable Long id, @Valid @RequestBody CompanyDto dto) {
         return ResponseEntity.ok(tenantService.updateCompany(id, dto));
     }
@@ -141,14 +141,14 @@ public class TenantController {
 
     @PostMapping("/roles")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('ROLE_ORGANIZATION') or hasAuthority('ROLE_PERMISSION_MANAGEMENT:ADD')")
-    @Operation(summary = "Create Role with Minute Permissions")
+    @Operation(summary = "Create Role with Minute Permissions", description = "dataScope (LEVEL or OWN) is writable: null on create = LEVEL, null on update = unchanged. A caller whose own role is OWN may only create or edit OWN roles (403).")
     public ResponseEntity<RoleDto> createRole(@Valid @RequestBody RoleDto dto) {
         return ResponseEntity.ok(tenantService.createRole(dto));
     }
 
     @PutMapping("/roles/{id}")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('ROLE_ORGANIZATION') or hasAuthority('ROLE_PERMISSION_MANAGEMENT:EDIT')")
-    @Operation(summary = "Update Role Details & Permissions")
+    @Operation(summary = "Update Role Details & Permissions", description = "dataScope (LEVEL or OWN) is writable: null on create = LEVEL, null on update = unchanged. A caller whose own role is OWN may only create or edit OWN roles (403).")
     public ResponseEntity<RoleDto> updateRole(@PathVariable Long id, @Valid @RequestBody RoleDto dto) {
         return ResponseEntity.ok(tenantService.updateRole(id, dto));
     }
@@ -156,7 +156,7 @@ public class TenantController {
     // --- Users ---
     @GetMapping("/users")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('ROLE_ORGANIZATION') or hasAuthority('ROLE_COMPANY') or hasAuthority('USER_MANAGEMENT:VIEW') or hasAuthority('LEADS:VIEW') or hasAuthority('WHATSAPP_AUTOMATIONS:ADD') or hasAuthority('WHATSAPP_AUTOMATIONS:EDIT')")
-    @Operation(summary = "Get Users by Company or Org")
+    @Operation(summary = "Get Users by Company or Org", description = "Callers without user-management rights (not ORG level, not super admin, no USER_MANAGEMENT:VIEW) get a slim user: id, firstName, lastName, fullName, roleName, isActive.")
     public ResponseEntity<List<UserDto>> getUsers(@RequestParam(required = false) Long organizationId, @RequestParam(required = false) Long companyId) {
         if (companyId != null) {
             return ResponseEntity.ok(tenantService.getUsersByCompany(companyId));
@@ -173,7 +173,7 @@ public class TenantController {
 
     @PutMapping("/users/{id}")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('ROLE_ORGANIZATION') or hasAuthority('ROLE_COMPANY') or hasAuthority('USER_MANAGEMENT:EDIT')")
-    @Operation(summary = "Update User Details, Role, & Scoping")
+    @Operation(summary = "Update User Details, Role, & Scoping", description = "The caller must have the user's organization and all of the user's current companies and branches in scope, as well as the requested ones (403 otherwise).")
     public ResponseEntity<UserDto> updateUser(@PathVariable Long id, @Valid @RequestBody UserUpdateRequest req) {
         return ResponseEntity.ok(tenantService.updateUser(id, req));
     }
