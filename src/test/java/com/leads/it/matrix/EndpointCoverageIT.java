@@ -33,9 +33,10 @@ class EndpointCoverageIT extends AbstractIntegrationTest {
 
     /**
      * The backlog may only shrink: a new endpoint cannot be parked in pending-endpoints.txt.
-     * 141 at Step 3.2 (2026-11-24). Lower it whenever a module moves lines into the matrix.
+     * 141 at Step 3.2 (2026-11-24); 139 after module 02 P1 (2026-11-25). Lower it whenever a module
+     * moves lines into the matrix.
      */
-    static final int PENDING_CEILING = 141;
+    static final int PENDING_CEILING = 139;
 
     @Autowired @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping mappings;
 

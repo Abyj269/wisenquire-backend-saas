@@ -26,3 +26,18 @@ This fits nginx on the same server (127.0.0.1) and the staging Docker network (1
   `curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -H "X-Forwarded-For: 203.0.113.$i" -d '{"email":"probe'$i'@example.invalid","password":"x"}' https://<live-api>/api/v1/auth/login`
   The 31st must be **429**. (Before the fix it stayed 401.)
 - Rollback: redeploy the previous WAR. There is no flag: the old behaviour is the vulnerability.
+
+## Login rate limits (module 02 P1, F-13)
+Per instance, in memory (`service/RequestRateLimiter`). Restarting an instance clears them.
+
+| Key space | Limit | Store size |
+|---|---|---|
+| `login-ip` (client IP, see above) | 30 logins / minute | 200,000 keys |
+| `login-user` (email) | 10 logins / minute | 100,000 keys |
+| `otp` (challenge) | 8 tries / 5 minutes | 100,000 keys |
+| `otp-issue` (user) | 1 OTP / minute | 100,000 keys |
+
+- **Before F-13:** once 20,000 keys were held in total, every NEW key got 429, so a flood of logins with random emails locked out every user.
+- **Now:** each key space has its own store; entries expire with their window; a full store evicts its least valuable entries. A key is never refused because a store is full (the limit "fails open" for evicted keys instead of blocking real users).
+- A refused login is 429 `RATE_LIMITED` with `Retry-After: 60`.
+- With 2 or more instances each keeps its own counts (limits multiply by the number of instances) until S12 adds a shared limiter.

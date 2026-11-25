@@ -6,8 +6,6 @@
 # (EndpointCoverageIT.PENDING_CEILING); lower the ceiling whenever lines are removed.
 
 # --- module 02 auth-identity
-GET /auth/profile  # module 02 auth-identity (AuthController)
-POST /auth/getting-started/seen  # module 02 auth-identity (AuthController)
 # --- module 03 tenant-admin
 DELETE /tenant/branches/trusted-ips/{id}  # module 03 tenant-admin (TenantController)
 DELETE /tenant/branches/{id}  # module 03 tenant-admin (TenantController)

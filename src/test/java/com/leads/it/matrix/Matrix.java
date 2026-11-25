@@ -30,6 +30,7 @@ public final class Matrix {
         all.addAll(WhatsAppRows.specs());
         all.addAll(ReportsRows.specs());
         all.addAll(MeRows.specs());
+        all.addAll(AuthRows.specs());
         return all;
     }
 
