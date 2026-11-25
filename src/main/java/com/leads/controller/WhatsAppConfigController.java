@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "whatsapp-config") // 01 Part B item 9: writes are audited
 @RequestMapping("/whatsapp/configs")
 @RequiredArgsConstructor
 @Tag(name = "WhatsApp Branch Configuration", description = "Branch-wise WhatsApp Cloud API connection setup")

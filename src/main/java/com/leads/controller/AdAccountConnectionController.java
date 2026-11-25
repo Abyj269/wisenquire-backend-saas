@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "ads-connections") // 01 Part B item 9: writes are audited
 @RequestMapping("/ads/connections")
 @RequiredArgsConstructor
 @Tag(name = "Ad Account Connections", description = "Company-default and branch-override Meta/Google Ads account connections")

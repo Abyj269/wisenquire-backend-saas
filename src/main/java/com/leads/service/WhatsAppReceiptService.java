@@ -48,8 +48,10 @@ public class WhatsAppReceiptService {
     }
 
     @Scheduled(fixedDelayString = "${whatsapp.receipts.reconcile-ms:2000}")
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.WHATSAPP_RECEIPT_RECONCILE, lockAtMostFor = "PT1M", lockAtLeastFor = "PT1S")
     @Transactional
     public void reconcile() {
+        com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.WHATSAPP_RECEIPT_RECONCILE);
         // Exact receiving-number join also prevents a receipt from affecting another tenant's chat.
         var pending = jdbc.queryForList("SELECT r.id,r.wamid,r.status,r.error_detail FROM whatsapp_status_receipts r JOIN whatsapp_messages m ON m.wamid=r.wamid JOIN whatsapp_conversations c ON c.id=m.conversation_id AND c.receiving_phone_number_id=r.phone_number_id WHERE r.applied=false AND m.direction='OUTBOUND' ORDER BY r.occurred_at,r.id LIMIT 100 FOR UPDATE");
         for (var row : pending) {
@@ -92,8 +94,10 @@ public class WhatsAppReceiptService {
     }
 
     @Scheduled(fixedDelayString = "${whatsapp.receipts.cleanup-ms:3600000}")
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.WHATSAPP_RECEIPT_CLEANUP, lockAtMostFor = "PT30M", lockAtLeastFor = "PT1M")
     @Transactional
     public void cleanup() {
+        com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.WHATSAPP_RECEIPT_CLEANUP);
         jdbc.update("DELETE FROM whatsapp_status_receipts WHERE created_at < CURRENT_TIMESTAMP - INTERVAL 30 DAY LIMIT 1000");
     }
 }

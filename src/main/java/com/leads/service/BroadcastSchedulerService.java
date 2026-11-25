@@ -56,7 +56,9 @@ public class BroadcastSchedulerService {
     private final BroadcastService broadcastService;
 
     @Scheduled(fixedDelayString = "${broadcast.scheduler.check-ms:60000}")
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.BROADCAST_SCHEDULER, lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
     public void processScheduledBroadcasts() {
+        com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.BROADCAST_SCHEDULER);
         LocalDateTime now = LocalDateTime.now();
 
         // Returns List<Object[]> where each row = [broadcastId (Long), companyId (Long)]

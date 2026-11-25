@@ -26,7 +26,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 @Service
@@ -49,8 +48,9 @@ public class BroadcastServiceImpl implements BroadcastService {
     private final WhatsAppConversationRepository conversationRepo;
     private final WhatsAppMessageRepository messageRepo;
 
+    /** Injected by name; bounded queue + TenantTaskDecorator (01 Part B item 6, AsyncConfig). */
     @Qualifier("broadcastExecutor")
-    private final ExecutorService broadcastExecutor;
+    private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor broadcastExecutor;
 
     @Override
     @Transactional
@@ -158,6 +158,12 @@ public class BroadcastServiceImpl implements BroadcastService {
         if (broadcast.getStatus() == BroadcastStatus.COMPLETED) {
             throw new IllegalStateException("Broadcast is already COMPLETED.");
         }
+        // Bounded queue (01 Part B item 6): refuse before any state change, so a full queue never
+        // leaves a broadcast stuck in SENDING.
+        if (broadcastExecutor.getThreadPoolExecutor().getQueue().remainingCapacity() == 0) {
+            throw new com.leads.exception.ApiException(com.leads.exception.ErrorCode.CONFLICT,
+                    "Too many broadcasts are being sent right now. Try again shortly.");
+        }
         // Guard against double-trigger (e.g. scheduler + manual send racing)
         if (broadcast.getStatus() == BroadcastStatus.SENDING) {
             log.warn("Broadcast ID {} is already SENDING — ignoring duplicate trigger.", broadcastId);
@@ -174,7 +180,13 @@ public class BroadcastServiceImpl implements BroadcastService {
                 @Override
                 public void afterCommit() {
                     log.info("afterCommit: submitting broadcast ID {} to executor", savedId);
-                    broadcastExecutor.submit(() -> executeBroadcastSend(savedId));
+                    try {
+                        broadcastExecutor.submit(() -> executeBroadcastSend(savedId));
+                    } catch (org.springframework.core.task.TaskRejectedException e) {
+                        // Only if the queue filled between the capacity check and commit. P-8 / module 16
+                        // (queue + pacing) replaces this; until then the broadcast stays SENDING.
+                        log.error("Broadcast {} was saved as SENDING but the executor queue is full; it was not started", savedId);
+                    }
                 }
             });
         } else {

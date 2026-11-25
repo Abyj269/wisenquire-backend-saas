@@ -27,6 +27,7 @@ public class SchedulingConfig {
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(20);
         executor.setThreadNamePrefix("ads-sync-");
+        executor.setTaskDecorator(new TenantTaskDecorator()); // 01 Part B item 6
         executor.initialize();
         return executor;
     }
@@ -44,6 +45,7 @@ public class SchedulingConfig {
         executor.setMaxPoolSize(8);
         executor.setQueueCapacity(500);
         executor.setThreadNamePrefix("automation-");
+        executor.setTaskDecorator(new TenantTaskDecorator()); // 01 Part B item 6
         executor.initialize();
         return executor;
     }

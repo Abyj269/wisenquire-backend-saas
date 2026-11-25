@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "whatsapp-schedule") // 01 Part B item 9: writes are audited
 @RequestMapping("/whatsapp")
 @RequiredArgsConstructor
 @Tag(name = "WhatsApp Business Hours & Holidays", description = "Branch-wise working hours, the company holiday calendar, and their auto-reply messages")

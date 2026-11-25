@@ -24,7 +24,7 @@ import java.util.function.Supplier;
 @TestComponent
 public class TenantFixture {
 
-    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS"};
+    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS"};
 
     private final EntityManager em;
     private final TransactionTemplate tx;
@@ -94,6 +94,55 @@ public class TenantFixture {
         return tx.execute(st -> { T e = em.find(type, id); return e == null ? "<deleted>" : String.valueOf(fields.apply(e)); });
     }
 
+    /** A fresh lead (with its own customer) in {@code s}, assigned to {@code assignee} (null = unassigned). */
+    public Long freshLeadAssignedTo(Slot s, Long assignee) {
+        return inTx(() -> {
+            Customer c = newCustomer(s);
+            Lead lead = newLead(s, c.getId());
+            if (assignee != null) lead.setAssignedTo(em.getReference(User.class, assignee));
+            return lead.getId();
+        });
+    }
+
+    public Long customerOfLead(Long leadId) { return inTx(() -> em.find(Lead.class, leadId).getCustomer().getId()); }
+
+    /** A fresh conversation in {@code s}: its agent and its linked lead are both optional. */
+    public Long freshConversationFor(Slot s, Long agent, Long leadId) {
+        return inTx(() -> {
+            WhatsAppConversation c = newConversation(s);
+            if (agent != null) c.setAssignedAgent(em.getReference(User.class, agent));
+            if (leadId != null) c.setLead(em.getReference(Lead.class, leadId));
+            return c.getId();
+        });
+    }
+
+    public Long freshQuotation(Slot s, Long leadId, Long createdBy) {
+        return inTx(() -> {
+            Quotation q = Quotation.builder()
+                    .organization(em.getReference(Organization.class, orgId.get(s.org())))
+                    .company(em.getReference(Company.class, companyId.get(s.company())))
+                    .lead(em.getReference(Lead.class, leadId))
+                    .quotationNumber("IT-QT-" + seq.incrementAndGet())
+                    .createdBy(createdBy == null ? null : em.getReference(User.class, createdBy)).build();
+            return persist(q).getId();
+        });
+    }
+
+    public Long freshDelivery(Slot s, Long leadId, Long assignedTo) {
+        return inTx(() -> {
+            Delivery d = Delivery.builder()
+                    .organization(em.getReference(Organization.class, orgId.get(s.org())))
+                    .company(em.getReference(Company.class, companyId.get(s.company())))
+                    .branch(em.getReference(Branch.class, branchId.get(s)))
+                    .lead(em.getReference(Lead.class, leadId))
+                    .deliveryNumber("IT-DL-" + seq.incrementAndGet()).status(DeliveryStatus.SCHEDULED)
+                    .scheduledDate(java.time.LocalDate.now().plusDays(1))
+                    .recipientName("IT Recipient").recipientPhone(phone()).addressLine1("IT Street 1")
+                    .assignedTo(assignedTo == null ? null : em.getReference(User.class, assignedTo)).build();
+            return persist(d).getId();
+        });
+    }
+
     public boolean exists(Class<?> type, Long id) { return Boolean.TRUE.equals(tx.execute(st -> em.find(type, id) != null)); }
 
     public <T> T inTx(Supplier<T> work) { ensureBuilt(); return tx.execute(st -> work.get()); }
@@ -156,6 +205,8 @@ public class TenantFixture {
 
     private Role role(Organization org, Persona p) {
         Role role = Role.builder().organization(org).roleName("IT " + p + " " + org.getCode()).roleLevel(p.level).build();
+        // D14: the agents' role is OWN. Inert unless own_scope.enforced is on for the org (OwnScopePrimitiveIT).
+        if (p == Persona.AGENT_OWN_1 || p == Persona.AGENT_OWN_2) role.setDataScope(DataScope.OWN);
         for (String module : MODULES) {
             role.getPermissions().add(RolePermission.builder().role(role).moduleName(module)
                     .canView(true).canAdd(true).canEdit(true).canDelete(true).canExport(true)

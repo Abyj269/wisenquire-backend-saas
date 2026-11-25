@@ -275,6 +275,7 @@ public class AuthService {
                 .roleId(role.getId())
                 .roleName(role.getRoleName())
                 .roleLevel(role.getRoleLevel())
+                .dataScope(role.getDataScope() == null ? com.leads.model.enums.DataScope.LEVEL : role.getDataScope())
                 .allowedCompanies(companies)
                 .allowedBranches(branches)
                 .permissions(permissions)

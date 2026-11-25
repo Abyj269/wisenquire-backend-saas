@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "ai-settings") // 01 Part B item 9: writes are audited
 @RequestMapping("/ai/settings")
 @RequiredArgsConstructor
 @Tag(name = "AI Settings", description = "Branch-wise AI provider connections and context/usage guardrails")

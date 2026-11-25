@@ -15,7 +15,6 @@ import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -33,7 +32,7 @@ class BroadcastServiceImplTest {
     @Mock LeadRepository leadRepo;
     @Mock TenantAccess access;
     @Mock AuthService authService;
-    @Mock ExecutorService broadcastExecutor;
+    @Mock org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor broadcastExecutor;
     @InjectMocks BroadcastServiceImpl service;
 
     final Pageable page = PageRequest.of(0, 20);

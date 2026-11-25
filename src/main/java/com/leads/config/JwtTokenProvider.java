@@ -35,6 +35,9 @@ public class JwtTokenProvider {
         claims.put("email", user.getEmail());
         claims.put("roleName", user.getRole().getRoleName());
         claims.put("roleLevel", user.getRole().getRoleLevel().name());
+        // D14: lets the frontend default to "My ..." views and hide assign controls (display only;
+        // the server always re-reads the role).
+        claims.put("dataScope", (user.getRole().getDataScope() == null ? com.leads.model.enums.DataScope.LEVEL : user.getRole().getDataScope()).name());
         claims.put("isSuperAdmin", user.getIsSuperAdmin());
         if (user.getOrganization() != null) {
             claims.put("organizationId", user.getOrganization().getId());

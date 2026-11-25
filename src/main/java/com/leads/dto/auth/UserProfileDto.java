@@ -26,6 +26,8 @@ public class UserProfileDto {
     private Long roleId;
     private String roleName;
     private RoleLevel roleLevel;
+    /** D14: LEVEL or OWN (display only; the server enforces). */
+    private com.leads.model.enums.DataScope dataScope;
     private List<CompanyScopeDto> allowedCompanies;
     private List<BranchScopeDto> allowedBranches;
     private Map<String, PermissionSetDto> permissions; // moduleName -> {canView, canAdd, canEdit, canDelete, canExport, canApprove, canAssign, canPrint}

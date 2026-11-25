@@ -1,0 +1,16 @@
+package com.leads.config;
+
+import com.leads.service.CompanyClock;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.time.Clock;
+
+/** The application clock in the server zone (D15). Tests replace it with a fixed clock. */
+@Configuration
+public class ClockConfig {
+    @Bean
+    @ConditionalOnMissingBean(Clock.class)
+    public Clock clock() { return Clock.system(CompanyClock.SERVER_ZONE); }
+}

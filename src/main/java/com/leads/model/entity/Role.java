@@ -34,6 +34,12 @@ public class Role {
     @Column(nullable = false, length = 30)
     private RoleLevel roleLevel;
 
+    /** D14: LEVEL (default, today's behaviour) or OWN (only own records, when own_scope.enforced is on). */
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    @Column(nullable = false, length = 10)
+    private com.leads.model.enums.DataScope dataScope = com.leads.model.enums.DataScope.LEVEL;
+
     @Column(length = 255)
     private String description;
 

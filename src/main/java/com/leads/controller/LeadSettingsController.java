@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "lead-settings") // 01 Part B item 9: writes are audited
 @RequestMapping("/settings")
 @RequiredArgsConstructor
 @Tag(name = "Lead Settings & Dynamic Engine", description = "Endpoints for managing dynamic fields, custom statuses, purposes, and company feature toggles")

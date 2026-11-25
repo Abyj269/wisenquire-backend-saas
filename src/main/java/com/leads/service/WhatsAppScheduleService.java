@@ -17,8 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -41,7 +39,8 @@ import java.util.stream.Collectors;
 public class WhatsAppScheduleService {
     private final TenantAccess access;
 
-    private static final ZoneId SERVER_ZONE = ZoneId.of("Asia/Dubai");
+    /** D15: calendar decisions go through CompanyClock (01 Part B item 11); SERVER_ZONE now lives there. */
+    private final CompanyClock companyClock;
 
     private final BranchWorkingHoursRepository workingHoursRepo;
     private final WhatsAppHolidayRepository holidayRepo;
@@ -250,10 +249,14 @@ public class WhatsAppScheduleService {
         return withinShift(hours.get(), companyNow.toLocalTime(), false) || withinShift(previous, companyNow.toLocalTime(), true);
     }
 
-    /** True current moment, expressed in the company's own configured timezone (server clock is the fixed, known starting point). */
+    /**
+     * True current moment in the company's own timezone. Delegates to {@link CompanyClock#now}.
+     * @deprecated call {@code CompanyClock.now(company)} directly; the remaining callers
+     * (AiUsageGuardService, WhatsAppCloudService) move in their own modules (18, 12).
+     */
+    @Deprecated
     public LocalDateTime nowInCompanyZone(Company company) {
-        String tz = company.getTimezone() != null ? company.getTimezone() : "Asia/Dubai";
-        return ZonedDateTime.now(SERVER_ZONE).withZoneSameInstant(ZoneId.of(tz)).toLocalDateTime();
+        return companyClock.now(company);
     }
 
     static void validateSchedule(WorkingHoursUpsertRequest req) {

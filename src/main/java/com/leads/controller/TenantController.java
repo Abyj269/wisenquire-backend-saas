@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "tenant") // 01 Part B item 9: writes are audited
 @RequestMapping("/tenant")
 @RequiredArgsConstructor
 @Tag(name = "Tenant & 4-Tier RBAC Management", description = "Endpoints for Organizations, Companies, Branches, Roles, and User Scoping")

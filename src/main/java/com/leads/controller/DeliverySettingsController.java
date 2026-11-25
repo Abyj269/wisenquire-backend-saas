@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@com.leads.audit.Audited(entity = "delivery-settings") // 01 Part B item 9: writes are audited
 @RequestMapping("/settings")
 @RequiredArgsConstructor
 @Tag(name = "Delivery Settings", description = "Endpoints for the Delivery module's company-level toggle and failure-reason master list")

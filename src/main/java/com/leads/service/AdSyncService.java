@@ -26,7 +26,11 @@ public class AdSyncService {
     private final AdSyncConnectionService syncConnectionService;
 
     @Scheduled(cron = "${ads.sync.cron:0 15 * * * *}")
+    // Hourly: one instance runs it; the lock is held at least 1 min so a second instance's trigger
+    // at the same minute is skipped (01 Part B item 7).
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.ADS_SYNC, lockAtMostFor = "PT50M", lockAtLeastFor = "PT1M")
     public void runScheduledSync() {
+        com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.ADS_SYNC);
         for (AdAccountConnection connection : connectionRepo.findByIsActiveTrue()) {
             try {
                 syncConnectionService.syncConnection(connection);

@@ -39,6 +39,7 @@
              version is rejected by Docker Engine 29+ (minimum API 1.44). -->
         <testcontainers.version>1.21.4</testcontainers.version>
         <archunit.version>1.4.1</archunit.version>
+        <shedlock.version>5.16.0</shedlock.version>
     </properties>
 
     <dependencies>
@@ -194,6 +195,22 @@
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- ShedLock (01 Part B item 7): each @Scheduled job runs on one instance at a time. -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
 
         <!-- Testing -->

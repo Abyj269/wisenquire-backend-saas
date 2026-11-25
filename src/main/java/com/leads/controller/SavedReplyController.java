@@ -7,7 +7,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
-@RestController @RequestMapping("/settings/saved-replies") @RequiredArgsConstructor
+@RestController
+@com.leads.audit.Audited(entity = "saved-replies") // 01 Part B item 9: writes are audited
+@RequestMapping("/settings/saved-replies") @RequiredArgsConstructor
 public class SavedReplyController {
     private final SavedReplyService service;
     @GetMapping

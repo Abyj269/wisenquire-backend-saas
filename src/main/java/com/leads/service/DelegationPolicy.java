@@ -19,6 +19,11 @@ public class DelegationPolicy {
         if (level == null || level.ordinal() < actor.getRole().getRoleLevel().ordinal()
             || level == RoleLevel.SUPER_ADMIN || (existing != null && (Boolean.TRUE.equals(existing.getIsSystemRole())
             || existing.getId().equals(actor.getRole().getId())))) throw denied();
+        // D14: an OWN creator may not create or edit a LEVEL role (that would be broader than its
+        // own scope). No API sets a role's scope yet, so a new role is LEVEL.
+        com.leads.model.enums.DataScope requested = existing != null && existing.getDataScope() != null
+                ? existing.getDataScope() : com.leads.model.enums.DataScope.LEVEL;
+        if (actor.getRole().getDataScope() == com.leads.model.enums.DataScope.OWN && requested == com.leads.model.enums.DataScope.LEVEL) throw denied();
         if (permissions != null) for (RolePermissionDto p : permissions) {
             String module = p.getModuleName().toUpperCase(Locale.ROOT);
             boolean[] flags={Boolean.TRUE.equals(p.getCanView()),Boolean.TRUE.equals(p.getCanAdd()),Boolean.TRUE.equals(p.getCanEdit()),Boolean.TRUE.equals(p.getCanDelete()),Boolean.TRUE.equals(p.getCanExport()),Boolean.TRUE.equals(p.getCanApprove()),Boolean.TRUE.equals(p.getCanAssign()),Boolean.TRUE.equals(p.getCanPrint())};

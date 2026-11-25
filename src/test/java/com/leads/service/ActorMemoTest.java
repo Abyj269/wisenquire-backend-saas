@@ -22,7 +22,7 @@ import static org.mockito.Mockito.*;
 class ActorMemoTest {
 
     private final UserRepository users = mock(UserRepository.class);
-    private final TenantAccess access = new TenantAccess(mock(EntityManager.class), users, mock(LeadRepository.class), new TenantStatusPolicy(7));
+    private final TenantAccess access = new TenantAccess(mock(EntityManager.class), users, mock(LeadRepository.class), new TenantStatusPolicy(7), mock(com.leads.flags.FeatureFlags.class));
 
     private static User user(String email, long version) {
         return User.builder().email(email).sessionVersion(version).isActive(true)

@@ -108,12 +108,35 @@ class ArchitectureReportTest {
             .as("(c) controllers do not use repositories directly")
             .allowEmptyShould(true);
 
+    // (d) D15 / 01 Part B item 11 ---------------------------------------------------------------
+    /**
+     * Calendar decisions must use CompanyClock. Bytecode cannot tell a timestamp from a calendar
+     * decision, so this lists every LocalDate.now(), LocalDateTime.now() and atStartOfDay() in services
+     * and controllers; each module clears or allow-lists its own sites (D15 call-site table).
+     */
+    static final ArchRule SERVER_DATE_CALLS = methods()
+            .that().areDeclaredInClassesThat().resideInAnyPackage("com.leads.service..", "com.leads.controller..")
+            .should(new ArchCondition<JavaMethod>("not use the server date for calendar decisions (use CompanyClock)") {
+                @Override public void check(JavaMethod m, ConditionEvents events) {
+                    if (m.getOwner().getSimpleName().equals("CompanyClock")) return;
+                    for (JavaMethodCall c : m.getMethodCallsFromSelf()) {
+                        String owner = c.getTargetOwner().getName();
+                        boolean now = c.getName().equals("now") && (owner.equals("java.time.LocalDate") || owner.equals("java.time.LocalDateTime"));
+                        boolean startOfDay = c.getName().equals("atStartOfDay") && owner.equals("java.time.LocalDate");
+                        if (now || startOfDay) events.add(SimpleConditionEvent.violated(m, "(d) " + m.getFullName() + " calls "
+                                + c.getTargetOwner().getSimpleName() + "." + c.getName() + "(), line " + c.getLineNumber()));
+                    }
+                }
+            })
+            .as("(d) services and controllers use CompanyClock, not LocalDate.now()/LocalDateTime.now()/atStartOfDay()")
+            .allowEmptyShould(true);
+
     @Test
     void reportViolations() throws Exception {
         assertFalse(CLASSES.isEmpty(), "no classes imported");
         List<String> out = new ArrayList<>();
         int total = 0;
-        for (ArchRule rule : List.of(SCOPED_ID_PARAMETERS, FIND_BY_ID_NEEDS_RECORD, CONTROLLERS_WITHOUT_REPOSITORIES)) {
+        for (ArchRule rule : List.of(SCOPED_ID_PARAMETERS, FIND_BY_ID_NEEDS_RECORD, CONTROLLERS_WITHOUT_REPOSITORIES, SERVER_DATE_CALLS)) {
             List<String> lines = report(rule);
             total += lines.size();
             out.add("== " + rule.getDescription() + ": " + lines.size() + " violation(s)");
