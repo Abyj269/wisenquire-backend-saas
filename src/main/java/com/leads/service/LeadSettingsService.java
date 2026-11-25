@@ -140,13 +140,14 @@ public class LeadSettingsService {
 
         status.setStatusName(dto.getStatusName());
         status.setStatusCode(dto.getStatusCode().toUpperCase());
-        status.setColorCode(dto.getColorCode());
         if (!wasRoleLocked) {
             // Role-locked stage types (Open/Assigned/Converted/Lost) are locked; only a regular status's stage type may change.
             status.setStageType(dto.getStageType());
         }
-        status.setIsDefault(dto.getIsDefault());
-        status.setIsActive(dto.getIsActive());
+        // NOT NULL columns: a field missing from the body keeps its value (was a 500 on the constraint).
+        if (dto.getColorCode() != null) status.setColorCode(dto.getColorCode());
+        if (dto.getIsDefault() != null) status.setIsDefault(dto.getIsDefault());
+        if (dto.getIsActive() != null) status.setIsActive(dto.getIsActive());
 
         LeadStatus saved = statusRepo.save(status);
         renumberPipeline(saved.getCompany().getId());
@@ -280,8 +281,9 @@ public class LeadSettingsService {
         purpose.setPurposeName(dto.getPurposeName());
         purpose.setDescription(dto.getDescription());
         if (dto.getClassification() != null) purpose.setClassification(dto.getClassification());
-        purpose.setSortOrder(dto.getSortOrder());
-        purpose.setIsActive(dto.getIsActive());
+        // NOT NULL columns: a field missing from the body keeps its value (was a 500 on the constraint).
+        if (dto.getSortOrder() != null) purpose.setSortOrder(dto.getSortOrder());
+        if (dto.getIsActive() != null) purpose.setIsActive(dto.getIsActive());
 
         return mapPurposeToDto(purposeRepo.save(purpose));
     }
@@ -317,8 +319,9 @@ public class LeadSettingsService {
                 .orElseThrow(() -> new IllegalArgumentException("Lost reason not found: " + id));
 
         reason.setReasonText(dto.getReasonText());
-        reason.setSortOrder(dto.getSortOrder());
-        reason.setIsActive(dto.getIsActive());
+        // NOT NULL columns: a field missing from the body keeps its value (was a 500 on the constraint).
+        if (dto.getSortOrder() != null) reason.setSortOrder(dto.getSortOrder());
+        if (dto.getIsActive() != null) reason.setIsActive(dto.getIsActive());
 
         return mapLostReasonToDto(lostReasonRepo.save(reason));
     }
@@ -393,9 +396,10 @@ public class LeadSettingsService {
         source.setSourceName(dto.getSourceName());
         source.setSourceCode(normalizeSourceCode(dto.getSourceCode()));
         source.setIcon(dto.getIcon());
-        source.setColorCode(dto.getColorCode());
-        source.setSortOrder(dto.getSortOrder());
-        source.setIsActive(dto.getIsActive());
+        // NOT NULL columns: a field missing from the body keeps its value (was a 500 on the constraint).
+        if (dto.getColorCode() != null) source.setColorCode(dto.getColorCode());
+        if (dto.getSortOrder() != null) source.setSortOrder(dto.getSortOrder());
+        if (dto.getIsActive() != null) source.setIsActive(dto.getIsActive());
 
         return mapSourceToDto(sourceRepo.save(source));
     }
@@ -495,8 +499,9 @@ public class LeadSettingsService {
                     return CompanyLeadSettings.builder().company(company).build();
                 });
 
-        settings.setLinkProductEnabled(dto.getLinkProductEnabled());
-        settings.setAutoAssignEnabled(dto.getAutoAssignEnabled());
+        // NOT NULL columns: a field missing from the body keeps its value (was a 500 on the constraint).
+        if (dto.getLinkProductEnabled() != null) settings.setLinkProductEnabled(dto.getLinkProductEnabled());
+        if (dto.getAutoAssignEnabled() != null) settings.setAutoAssignEnabled(dto.getAutoAssignEnabled());
         settings.setAutoAssignStrategy(dto.getAutoAssignStrategy());
         if (dto.getCustomerLostAfterDays() != null) {
             settings.setCustomerLostAfterDays(dto.getCustomerLostAfterDays());

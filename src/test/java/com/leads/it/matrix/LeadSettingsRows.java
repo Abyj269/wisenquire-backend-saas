@@ -24,7 +24,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  */
 final class LeadSettingsRows {
 
-    /** One settings resource: its path, a fresh record, the record's watched state, and create/update bodies. */
+    /**
+     * One settings resource: its path, a fresh record, the record's watched state, and create/update bodies.
+     * The update endpoints copy every field from the body (a missing isActive / isDefault / colorCode is a
+     * 500 on the NOT NULL column, as from any client), so the update bodies send the record's current values.
+     */
     private record Resource<T>(String path, Class<T> type, BiFunction<TenantFixture, Slot, Long> fresh,
                                Function<T, Object> state, Function<TenantFixture, String> createBody, Function<T, String> updateBody) { }
 
@@ -34,7 +38,7 @@ final class LeadSettingsRows {
                 st -> st.getStatusName() + "|" + st.getIsActive() + "|" + st.getSortOrder(),
                 f -> json("statusName", "IT New Status", "statusCode", "IT_NEW_" + unique(f), "colorCode", "#10B981", "stageType", "NEGOTIATION"),
                 st -> json("statusName", "IT Renamed Status", "statusCode", st.getStatusCode(), "colorCode", "#10B981", "stageType", "NEGOTIATION",
-                        "isActive", st.getIsActive(), "sortOrder", st.getSortOrder())));
+                        "isActive", st.getIsActive(), "sortOrder", st.getSortOrder(), "isDefault", st.getIsDefault())));
         crud(all, new Resource<>("purposes", LeadPurpose.class, TenantFixture::freshPurpose,
                 p -> p.getPurposeName() + "|" + p.getIsActive(),
                 // Inactive: an active purpose would make "Lead Purpose" mandatory for the other modules' lead rows.
@@ -47,7 +51,7 @@ final class LeadSettingsRows {
         crud(all, new Resource<>("sources", LeadSource.class, TenantFixture::freshSource,
                 so -> so.getSourceName() + "|" + so.getIsActive(),
                 f -> json("sourceName", "IT New Source", "sourceCode", "IT_NEW_SRC_" + unique(f)),
-                so -> json("sourceName", "IT Renamed Source", "sourceCode", so.getSourceCode(), "isActive", so.getIsActive(), "sortOrder", so.getSortOrder())));
+                so -> json("sourceName", "IT Renamed Source", "sourceCode", so.getSourceCode(), "colorCode", so.getColorCode(), "isActive", so.getIsActive(), "sortOrder", so.getSortOrder())));
         crud(all, new Resource<>("dynamic-fields", DynamicFieldDefinition.class, TenantFixture::freshDynamicField,
                 d -> d.getFieldLabel() + "|" + d.getIsActive() + "|" + d.getIsMandatory(),
                 f -> json("fieldName", "it_new_" + unique(f), "fieldLabel", "IT New Field", "fieldType", "TEXT"),

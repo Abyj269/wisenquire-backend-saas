@@ -79,6 +79,40 @@ class LeadSettingsIT extends AbstractIntegrationTest {
         assertEquals(200, setDefaultStatus(fixture.status(Slot.A1a)).getStatus());
     }
 
+    // ---- updates without the optional NOT NULL fields (was 500 on the column constraint) ----------
+
+    @Test
+    void anUpdateThatLeavesOutOptionalFieldsKeepsTheirValues() throws Exception {
+        Long status = fixture.freshStatus(Slot.A1a);
+        MockHttpServletResponse r = send(Persona.ORG_ADMIN, put("/settings/statuses/{id}", status), Map.of("statusName", "IT Minimal",
+                "statusCode", fixture.state(com.leads.model.entity.LeadStatus.class, status, com.leads.model.entity.LeadStatus::getStatusCode),
+                "stageType", "NEGOTIATION", "colorCode", "#10B981")); // colorCode is @NotBlank on the DTO: missing = 400 by validation
+        assertEquals(200, r.getStatus(), r.getContentAsString());
+        assertEquals("IT Minimal|#10B981|false|true", fixture.state(com.leads.model.entity.LeadStatus.class, status,
+                x -> x.getStatusName() + "|" + x.getColorCode() + "|" + x.getIsDefault() + "|" + x.getIsActive()));
+
+        Long purpose = fixture.freshPurpose(Slot.A1a);
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/settings/purposes/{id}", purpose), Map.of("purposeName", "IT Minimal")).getStatus());
+        assertEquals("false|0", fixture.state(com.leads.model.entity.LeadPurpose.class, purpose, x -> x.getIsActive() + "|" + x.getSortOrder()));
+
+        Long reason = fixture.freshLostReason(Slot.A1a);
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/settings/lost-reasons/{id}", reason), Map.of("reasonText", "IT Minimal")).getStatus());
+        assertEquals("true|0", fixture.state(com.leads.model.entity.LeadLostReason.class, reason, x -> x.getIsActive() + "|" + x.getSortOrder()));
+
+        Long source = fixture.freshSource(Slot.A1a);
+        MockHttpServletResponse s = send(Persona.ORG_ADMIN, put("/settings/sources/{id}", source), Map.of("sourceName", "IT Minimal",
+                "sourceCode", fixture.state(com.leads.model.entity.LeadSource.class, source, com.leads.model.entity.LeadSource::getSourceCode)));
+        assertEquals(200, s.getStatus(), s.getContentAsString());
+        assertEquals("#6366F1|true|0", fixture.state(com.leads.model.entity.LeadSource.class, source, x -> x.getColorCode() + "|" + x.getIsActive() + "|" + x.getSortOrder()));
+
+        // Company settings: send one field at a time; the others keep their values. Restored at the end.
+        String company = String.valueOf(fixture.company(Slot.A1a));
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/settings/company-lead-settings").param("companyId", company), Map.of("linkProductEnabled", false)).getStatus());
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/settings/company-lead-settings").param("companyId", company), Map.of("customerLostAfterDays", 60)).getStatus());
+        assertTrue(fixture.companyLeadSettingsState(fixture.company(Slot.A1a)).startsWith("[false|false|"), "link-product and auto-assign kept");
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/settings/company-lead-settings").param("companyId", company), Map.of("linkProductEnabled", true)).getStatus());
+    }
+
     // ---- F-12 ---------------------------------------------------------------------------------
 
     @Test
