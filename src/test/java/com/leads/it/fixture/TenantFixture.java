@@ -24,7 +24,7 @@ import java.util.function.Supplier;
 @TestComponent
 public class TenantFixture {
 
-    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS"};
+    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS", "PRODUCT_CATALOG"};
     /** Tenant-admin rights (module 03): managers have them; agents do not, like the real "Agent" template. */
     private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT"};
 
@@ -244,6 +244,26 @@ public class TenantFixture {
         return inTx(() -> em.createQuery("select s from CompanyLeadSettings s where s.company.id = :c", CompanyLeadSettings.class)
                 .setParameter("c", company).getResultList().stream()
                 .map(x -> x.getLinkProductEnabled() + "|" + x.getAutoAssignEnabled() + "|" + x.getAutoAssignStrategy() + "|" + x.getUpdatedAt()).toList().toString());
+    }
+
+    // ---- module 05: products -------------------------------------------------------------------
+
+    public Long freshProduct(Slot s) {
+        return inTx(() -> { int n = seq.incrementAndGet(); return persist(ProductMaster.builder().company(companyRef(s))
+                .productCode("IT-PRD-" + n).productName("IT Product " + n).unitPrice(new java.math.BigDecimal("10.00")).build()).getId(); });
+    }
+
+    /** Puts {@code product} on a fresh lead of slot {@code s} (a lead_products row). */
+    public void useProductOnLead(Slot s, Long product) {
+        Long lead = freshLead(s);
+        inTx(() -> persist(LeadProduct.builder().lead(em.getReference(Lead.class, lead)).product(em.getReference(ProductMaster.class, product)).build()));
+    }
+
+    /** Puts {@code product} on a fresh quotation of slot {@code s} (a quotation_items row). */
+    public void useProductOnQuotation(Slot s, Long product) {
+        Long quotation = freshQuotation(s, freshLead(s), null);
+        inTx(() -> persist(QuotationItem.builder().quotation(em.getReference(Quotation.class, quotation))
+                .product(em.getReference(ProductMaster.class, product)).itemName("IT item").build()));
     }
 
     public String freshEmail(Slot s) { return "new" + seq.incrementAndGet() + "@org-" + Character.toLowerCase(s.org()) + ".it.test"; }

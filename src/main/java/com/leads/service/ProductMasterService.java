@@ -16,14 +16,26 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ProductMasterService {
     private final TenantAccess access;
+    private final ProductWriteScope writeScope;
 
     private final ProductMasterRepository productRepo;
     private final CompanyRepository companyRepo;
 
     @Transactional(readOnly = true)
     public List<ProductMasterDto> getProductsByCompany(Long companyId) {
+        return getProductsByCompany(companyId, false);
+    }
+
+    /**
+     * Module 05 P1: {@code includeInactive} lists deactivated products too, so the catalogue screen can
+     * show and reactivate them. It needs PRODUCT_CATALOG:VIEW (LEADS:VIEW alone is enough for the pickers' active list).
+     */
+    @Transactional(readOnly = true)
+    public List<ProductMasterDto> getProductsByCompany(Long companyId, boolean includeInactive) {
         access.company(companyId);
-        return productRepo.findByCompanyIdAndIsActiveTrueOrderByProductNameAsc(companyId)
+        if (includeInactive) access.permission("PRODUCT_CATALOG:VIEW");
+        return (includeInactive ? productRepo.findByCompanyIdOrderByProductNameAsc(companyId)
+                        : productRepo.findByCompanyIdAndIsActiveTrueOrderByProductNameAsc(companyId))
                 .stream()
                 .map(this::mapToDto)
                 .collect(Collectors.toList());
@@ -31,9 +43,7 @@ public class ProductMasterService {
 
     @Transactional
     public ProductMasterDto createProduct(Long companyId, ProductMasterDto dto) {
-        access.company(companyId);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+        Company company = writeScope.check(companyId);
 
         ProductMaster product = ProductMaster.builder()
                 .company(company)
@@ -53,27 +63,37 @@ public class ProductMasterService {
 
     @Transactional
     public ProductMasterDto updateProduct(Long id, ProductMasterDto dto) {
-        access.record(com.leads.model.entity.ProductMaster.class, id);
-        ProductMaster product = productRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Product not found: " + id));
+        ProductMaster product = access.record(com.leads.model.entity.ProductMaster.class, id);
+        writeScope.check(product.getCompany().getId());
 
         product.setProductCode(dto.getProductCode().toUpperCase());
         product.setProductName(dto.getProductName());
         product.setSku(dto.getSku());
         product.setCategory(dto.getCategory());
-        product.setUnitPrice(dto.getUnitPrice());
-        product.setCurrency(dto.getCurrency());
+        product.setUnitPrice(dto.getUnitPrice()); // @NotNull on the DTO
+        // A missing currency keeps the product's currency: null would break the lead/quotation currency match.
+        if (dto.getCurrency() != null) product.setCurrency(dto.getCurrency());
         product.setTaxPercentage(dto.getTaxPercentage());
         product.setDescription(dto.getDescription());
-        product.setIsActive(dto.getIsActive());
+        // NOT NULL column: a missing isActive keeps its value (was a 500 on the constraint).
+        if (dto.getIsActive() != null) product.setIsActive(dto.getIsActive());
 
         return mapToDto(productRepo.save(product));
     }
 
     @Transactional
-    public void deleteProduct(Long id) {
-        access.record(com.leads.model.entity.ProductMaster.class, id);
-        productRepo.deleteById(id);
+    public com.leads.dto.settings.ProductDeleteResult deleteProduct(Long id) {
+        ProductMaster product = access.record(com.leads.model.entity.ProductMaster.class, id);
+        writeScope.check(product.getCompany().getId());
+        // Module 05 P1: lead_products and quotation_items reference products with plain FKs, so a hard
+        // delete of a used product failed (500). Keep it for their history and hide it instead.
+        if (productRepo.usedByLeads(id) || productRepo.usedByQuotations(id)) {
+            product.setIsActive(false);
+            productRepo.save(product);
+            return new com.leads.dto.settings.ProductDeleteResult(com.leads.dto.settings.ProductDeleteResult.Outcome.DEACTIVATED);
+        }
+        productRepo.delete(product);
+        return new com.leads.dto.settings.ProductDeleteResult(com.leads.dto.settings.ProductDeleteResult.Outcome.DELETED);
     }
 
     private ProductMasterDto mapToDto(ProductMaster p) {

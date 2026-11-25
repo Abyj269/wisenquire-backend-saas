@@ -45,6 +45,8 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Module blocks (00-INDEX) are not applied in number order: a lower, not-yet-applied version must still run.
+    out-of-order: true
 
 app:
   security:
