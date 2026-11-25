@@ -28,11 +28,16 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>
  * Results: {@code target/isolation-matrix/results.txt}.
  */
+@org.junit.jupiter.api.TestInstance(org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS)
 class IsolationMatrixIT extends AbstractIntegrationTest {
 
     private static final List<String> RESULTS = Collections.synchronizedList(new ArrayList<>());
 
     @Autowired MockMvc mvc;
+    @Autowired com.leads.flags.FeatureFlags flags;
+
+    @org.junit.jupiter.api.BeforeAll
+    void matrixFlagsOn() { Matrix.flagsOn(flags, fixture); }
 
     static Stream<Row> rows() { return Matrix.rows().stream(); }
 
@@ -65,6 +70,9 @@ class IsolationMatrixIT extends AbstractIntegrationTest {
             if (before != null) assertEquals(before, probe.state().get(), "denied request changed the record: " + row);
         }
     }
+
+    @AfterAll
+    void matrixFlagsOff() { Matrix.flagsOff(flags, fixture); }
 
     @AfterAll
     static void writeReport() throws Exception {

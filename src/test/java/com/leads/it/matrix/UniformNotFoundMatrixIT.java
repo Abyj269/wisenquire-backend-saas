@@ -44,11 +44,13 @@ class UniformNotFoundMatrixIT extends AbstractIntegrationTest {
     @BeforeAll
     void flagOn() {
         flags.setOverride(FeatureFlag.ERRORS_UNIFORM_NOT_FOUND, fixture.org('A'), true, "it-test", "UniformNotFoundMatrixIT");
+        Matrix.flagsOn(flags, fixture);
     }
 
     @AfterAll
     void flagOff() {
         flags.clearOverride(FeatureFlag.ERRORS_UNIFORM_NOT_FOUND, fixture.org('A'));
+        Matrix.flagsOff(flags, fixture);
     }
 
     static Stream<Row> rows() {

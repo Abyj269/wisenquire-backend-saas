@@ -29,6 +29,7 @@ class LeadSettingsDefaultStatusTest {
     @Mock LeadStatusRepository statusRepo;
     @Mock CompanyLeadSettingsRepository settingsRepo;
     @Mock CompanyRepository companyRepo;
+    @Mock LeadSettingsWriteScope writeScope;
     @InjectMocks LeadSettingsService service;
 
     final Company companyA = Company.builder().id(10L).build();

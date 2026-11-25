@@ -207,6 +207,45 @@ public class TenantFixture {
     }
 
     /** A unique email for create-user rows. */
+    // ---- module 04: fresh lead-settings records for rows that write -----------------------------
+
+    private Company companyRef(Slot s) { return em.getReference(Company.class, companyId.get(s.company())); }
+
+    /** A custom mid-pipeline status (NEGOTIATION: not an anchor, not role-locked, so it can be edited and deleted). */
+    public Long freshStatus(Slot s) {
+        return inTx(() -> { int n = seq.incrementAndGet(); return persist(LeadStatus.builder().company(companyRef(s))
+                .statusName("IT Status " + n).statusCode("IT_ST_" + n).stageType(StageType.NEGOTIATION).sortOrder(5).build()).getId(); });
+    }
+    /** Inactive, so it never makes "Lead Purpose" mandatory for other modules' lead rows. */
+    public Long freshPurpose(Slot s) {
+        return inTx(() -> persist(LeadPurpose.builder().company(companyRef(s)).purposeName("IT Purpose " + seq.incrementAndGet()).isActive(false).build()).getId());
+    }
+    public Long freshSource(Slot s) {
+        return inTx(() -> { int n = seq.incrementAndGet(); return persist(LeadSource.builder().company(companyRef(s))
+                .sourceName("IT Source " + n).sourceCode("IT_SRC_" + n).build()).getId(); });
+    }
+    public Long freshLostReason(Slot s) {
+        return inTx(() -> persist(LeadLostReason.builder().company(companyRef(s)).reasonText("IT Reason " + seq.incrementAndGet()).build()).getId());
+    }
+    public Long freshDynamicField(Slot s) {
+        return inTx(() -> { int n = seq.incrementAndGet(); return persist(DynamicFieldDefinition.builder().company(companyRef(s))
+                .fieldName("it_field_" + n).fieldLabel("IT Field " + n).fieldType(FieldType.TEXT).build()).getId(); });
+    }
+
+    /** Probe state of a predefined field config ("none" until the company first saves or reads one). */
+    public String predefinedFieldState(Long company, String fieldKey) {
+        return inTx(() -> em.createQuery("select c from PredefinedFieldConfig c where c.company.id = :c and c.fieldKey = :k", PredefinedFieldConfig.class)
+                .setParameter("c", company).setParameter("k", PredefinedLeadField.valueOf(fieldKey)).getResultList().stream()
+                .map(c -> c.getIsVisible() + "|" + c.getIsMandatory()).toList().toString());
+    }
+
+    /** Probe state of a company's lead settings row ("[]" until it exists). */
+    public String companyLeadSettingsState(Long company) {
+        return inTx(() -> em.createQuery("select s from CompanyLeadSettings s where s.company.id = :c", CompanyLeadSettings.class)
+                .setParameter("c", company).getResultList().stream()
+                .map(x -> x.getLinkProductEnabled() + "|" + x.getAutoAssignEnabled() + "|" + x.getAutoAssignStrategy() + "|" + x.getUpdatedAt()).toList().toString());
+    }
+
     public String freshEmail(Slot s) { return "new" + seq.incrementAndGet() + "@org-" + Character.toLowerCase(s.org()) + ".it.test"; }
 
     public boolean exists(Class<?> type, Long id) { return Boolean.TRUE.equals(tx.execute(st -> em.find(type, id) != null)); }

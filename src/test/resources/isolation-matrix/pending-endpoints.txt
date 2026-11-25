@@ -6,31 +6,6 @@
 # (EndpointCoverageIT.PENDING_CEILING); lower the ceiling whenever lines are removed.
 
 # --- module 02 auth-identity
-# --- module 04 lead-settings
-DELETE /settings/dynamic-fields/{id}  # module 04 lead-settings (LeadSettingsController)
-DELETE /settings/lost-reasons/{id}  # module 04 lead-settings (LeadSettingsController)
-DELETE /settings/purposes/{id}  # module 04 lead-settings (LeadSettingsController)
-DELETE /settings/sources/{id}  # module 04 lead-settings (LeadSettingsController)
-DELETE /settings/statuses/{id}  # module 04 lead-settings (LeadSettingsController)
-GET /settings/company-lead-settings  # module 04 lead-settings (LeadSettingsController)
-GET /settings/dynamic-fields  # module 04 lead-settings (LeadSettingsController)
-GET /settings/lost-reasons  # module 04 lead-settings (LeadSettingsController)
-GET /settings/predefined-fields  # module 04 lead-settings (LeadSettingsController)
-GET /settings/purposes  # module 04 lead-settings (LeadSettingsController)
-GET /settings/sources  # module 04 lead-settings (LeadSettingsController)
-GET /settings/statuses  # module 04 lead-settings (LeadSettingsController)
-POST /settings/dynamic-fields  # module 04 lead-settings (LeadSettingsController)
-POST /settings/lost-reasons  # module 04 lead-settings (LeadSettingsController)
-POST /settings/purposes  # module 04 lead-settings (LeadSettingsController)
-POST /settings/sources  # module 04 lead-settings (LeadSettingsController)
-POST /settings/statuses  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/company-lead-settings  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/dynamic-fields/{id}  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/lost-reasons/{id}  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/predefined-fields/{fieldKey}  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/purposes/{id}  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/sources/{id}  # module 04 lead-settings (LeadSettingsController)
-PUT /settings/statuses/{id}  # module 04 lead-settings (LeadSettingsController)
 # --- module 05 products
 DELETE /products/{id}  # module 05 products (ProductController)
 GET /products  # module 05 products (ProductController)

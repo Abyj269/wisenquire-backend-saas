@@ -32,7 +32,22 @@ public final class Matrix {
         all.addAll(MeRows.specs());
         all.addAll(AuthRows.specs());
         all.addAll(TenantRows.specs());
+        all.addAll(LeadSettingsRows.specs());
         return all;
+    }
+
+    /**
+     * D13 flags the matrix runs with ON for every fixture org: the rows assert the NEW scope rules.
+     * Each flag's old behaviour (OFF) is covered by its module's own IT.
+     */
+    public static final List<com.leads.flags.FeatureFlag> FLAGS_ON = List.of(com.leads.flags.FeatureFlag.LEAD_SETTINGS_COMPANY_WIDE_WRITES);
+
+    public static void flagsOn(com.leads.flags.FeatureFlags flags, com.leads.it.fixture.TenantFixture f) {
+        for (var flag : FLAGS_ON) for (char o : new char[]{'A', 'B', 'S', 'P'}) flags.setOverride(flag, f.org(o), true, "it-test", "isolation matrix");
+    }
+
+    public static void flagsOff(com.leads.flags.FeatureFlags flags, com.leads.it.fixture.TenantFixture f) {
+        for (var flag : FLAGS_ON) for (char o : new char[]{'A', 'B', 'S', 'P'}) flags.clearOverride(flag, f.org(o));
     }
 
     public static List<Row> rows() {

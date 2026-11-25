@@ -24,7 +24,9 @@ import java.util.List;
 @com.leads.audit.Audited(entity = "lead-settings") // 01 Part B item 9: writes are audited
 @RequestMapping("/settings")
 @RequiredArgsConstructor
-@Tag(name = "Lead Settings & Dynamic Engine", description = "Endpoints for managing dynamic fields, custom statuses, purposes, and company feature toggles")
+@Tag(name = "Lead Settings & Dynamic Engine", description = "Endpoints for managing dynamic fields, custom statuses, purposes, and company feature toggles. "
+        + "Reads need company scope. Writes (POST/PUT/DELETE) also need the LEAD_SETTINGS action; with flag lead_settings.company_wide_writes ON for the organization "
+        + "they need company-wide scope too (COMPANY level or above), otherwise 403 FORBIDDEN (module 04, F-12).")
 public class LeadSettingsController {
 
     private final LeadSettingsService settingsService;

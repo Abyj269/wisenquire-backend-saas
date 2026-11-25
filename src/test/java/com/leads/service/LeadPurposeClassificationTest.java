@@ -15,22 +15,26 @@ class LeadPurposeClassificationTest {
     final LeadPurposeRepository purposes = mock(LeadPurposeRepository.class);
     final CompanyRepository companies = mock(CompanyRepository.class);
     final LeadRepository leads = mock(LeadRepository.class);
-    final LeadSettingsService service = new LeadSettingsService(mock(TenantAccess.class), mock(LeadStatusRepository.class), purposes,
+    final TenantAccess access = mock(TenantAccess.class);
+    final LeadSettingsWriteScope writeScope = mock(LeadSettingsWriteScope.class);
+    final Company company = Company.builder().id(1L).build();
+    final LeadSettingsService service = new LeadSettingsService(access, writeScope, mock(LeadStatusRepository.class), purposes,
         mock(LeadSourceRepository.class), mock(LeadLostReasonRepository.class), mock(CompanyLeadSettingsRepository.class), companies, leads);
 
     @ParameterizedTest @EnumSource(PurposeClassification.class)
     void savesAndReturnsClassificationWithoutChangingLeadOutcomes(PurposeClassification classification) {
-        when(companies.findById(1L)).thenReturn(Optional.of(Company.builder().id(1L).build()));
+        when(writeScope.check(1L)).thenReturn(company);
         when(purposes.save(any())).thenAnswer(i -> i.getArgument(0));
         var result = service.createPurpose(1L, LeadPurposeDto.builder().purposeName("Product inquiry").classification(classification).build());
         assertEquals(classification, result.getClassification());
         verifyNoInteractions(leads);
     }
     @Test void omittedClassificationDefaultsOnCreateAndIsPreservedOnUpdate() {
-        when(companies.findById(1L)).thenReturn(Optional.of(Company.builder().id(1L).build()));
+        when(writeScope.check(1L)).thenReturn(company);
         when(purposes.save(any())).thenAnswer(i -> i.getArgument(0));
         assertEquals(PurposeClassification.POTENTIAL, service.createPurpose(1L, LeadPurposeDto.builder().purposeName("Inquiry").build()).getClassification());
-        var existing = LeadPurpose.builder().id(2L).classification(PurposeClassification.HIGH_POTENTIAL).build();
+        var existing = LeadPurpose.builder().id(2L).company(company).classification(PurposeClassification.HIGH_POTENTIAL).build();
+        when(access.record(LeadPurpose.class, 2L)).thenReturn(existing);
         when(purposes.findById(2L)).thenReturn(Optional.of(existing));
         assertEquals(PurposeClassification.HIGH_POTENTIAL, service.updatePurpose(2L, LeadPurposeDto.builder().purposeName("Renamed").sortOrder(0).isActive(true).build()).getClassification());
         assertEquals(PurposeClassification.IRRELEVANT, service.updatePurpose(2L, LeadPurposeDto.builder().purposeName("Outside scope").classification(PurposeClassification.IRRELEVANT).sortOrder(0).isActive(true).build()).getClassification());

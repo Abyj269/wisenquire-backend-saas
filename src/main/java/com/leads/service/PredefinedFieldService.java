@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PredefinedFieldService {
     private final TenantAccess access;
+    private final LeadSettingsWriteScope writeScope;
 
     // Same curated codes as the frontend's country-codes.ts list (plus OTHER)
     // and the fixed 4-language set — kept small and server-validated so a
@@ -49,7 +50,7 @@ public class PredefinedFieldService {
 
     @Transactional
     public PredefinedFieldConfigDto updateConfig(Long companyId, String fieldKeyRaw, PredefinedFieldConfigDto dto) {
-        access.company(companyId);
+        writeScope.check(companyId);
         PredefinedLeadField field = parseFieldKey(fieldKeyRaw);
         if (field.isLocked()) {
             throw new IllegalArgumentException(
@@ -118,8 +119,8 @@ public class PredefinedFieldService {
     private PredefinedFieldConfig getOrCreate(Long companyId, PredefinedLeadField field) {
         return configRepo.findByCompanyIdAndFieldKey(companyId, field)
                 .orElseGet(() -> {
-                    Company company = companyRepo.findById(companyId)
-                            .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+                    // Module 04 P1: callers checked the company already; a reference avoids an unchecked load.
+                    Company company = companyRepo.getReferenceById(companyId);
                     return configRepo.save(PredefinedFieldConfig.builder()
                             .company(company)
                             .fieldKey(field)

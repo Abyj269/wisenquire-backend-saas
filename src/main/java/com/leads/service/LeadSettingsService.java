@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class LeadSettingsService {
     private final TenantAccess access;
+    private final LeadSettingsWriteScope writeScope;
 
     private final LeadStatusRepository statusRepo;
     private final LeadPurposeRepository purposeRepo;
@@ -75,9 +76,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadStatusDto createStatus(Long companyId, LeadStatusDto dto) {
-        access.company(companyId);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+        Company company = writeScope.check(companyId);
 
         if (dto.getStageType() == null || ROLE_LOCKED_TYPES.contains(dto.getStageType())) {
             throw new IllegalArgumentException(
@@ -117,7 +116,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadStatusDto updateStatus(Long id, LeadStatusDto dto) {
-        access.record(com.leads.model.entity.LeadStatus.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadStatus.class, id).getCompany().getId());
         LeadStatus status = statusRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Status not found: " + id));
 
@@ -156,7 +155,7 @@ public class LeadSettingsService {
 
     @Transactional
     public void deleteStatus(Long id) {
-        access.record(com.leads.model.entity.LeadStatus.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadStatus.class, id).getCompany().getId());
         LeadStatus status = statusRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Status not found: " + id));
 
@@ -258,9 +257,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadPurposeDto createPurpose(Long companyId, LeadPurposeDto dto) {
-        access.company(companyId);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+        Company company = writeScope.check(companyId);
 
         LeadPurpose purpose = LeadPurpose.builder()
                 .company(company)
@@ -276,7 +273,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadPurposeDto updatePurpose(Long id, LeadPurposeDto dto) {
-        access.record(com.leads.model.entity.LeadPurpose.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadPurpose.class, id).getCompany().getId());
         LeadPurpose purpose = purposeRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Purpose not found: " + id));
 
@@ -301,9 +298,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadLostReasonDto createLostReason(Long companyId, LeadLostReasonDto dto) {
-        access.company(companyId);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+        Company company = writeScope.check(companyId);
 
         LeadLostReason reason = LeadLostReason.builder()
                 .company(company)
@@ -317,7 +312,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadLostReasonDto updateLostReason(Long id, LeadLostReasonDto dto) {
-        access.record(com.leads.model.entity.LeadLostReason.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadLostReason.class, id).getCompany().getId());
         LeadLostReason reason = lostReasonRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Lost reason not found: " + id));
 
@@ -330,7 +325,7 @@ public class LeadSettingsService {
 
     @Transactional
     public void deleteLostReason(Long id) {
-        access.record(com.leads.model.entity.LeadLostReason.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadLostReason.class, id).getCompany().getId());
         lostReasonRepo.deleteById(id);
     }
 
@@ -349,7 +344,7 @@ public class LeadSettingsService {
 
     @Transactional
     public void deletePurpose(Long id) {
-        access.record(com.leads.model.entity.LeadPurpose.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadPurpose.class, id).getCompany().getId());
         purposeRepo.deleteById(id);
     }
 
@@ -365,9 +360,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadSourceDto createSource(Long companyId, LeadSourceDto dto) {
-        access.company(companyId);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+        Company company = writeScope.check(companyId);
 
         LeadSource source = LeadSource.builder()
                 .company(company)
@@ -388,7 +381,7 @@ public class LeadSettingsService {
 
     @Transactional
     public LeadSourceDto updateSource(Long id, LeadSourceDto dto) {
-        access.record(com.leads.model.entity.LeadSource.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadSource.class, id).getCompany().getId());
         LeadSource source = sourceRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Source not found: " + id));
 
@@ -409,7 +402,7 @@ public class LeadSettingsService {
 
     @Transactional
     public void deleteSource(Long id) {
-        access.record(com.leads.model.entity.LeadSource.class, id);
+        writeScope.check(access.record(com.leads.model.entity.LeadSource.class, id).getCompany().getId());
         LeadSource source = sourceRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Source not found: " + id));
 
@@ -494,7 +487,7 @@ public class LeadSettingsService {
 
     @Transactional
     public CompanyLeadSettingsDto updateCompanyLeadSettings(Long companyId, CompanyLeadSettingsDto dto) {
-        access.company(companyId);
+        writeScope.check(companyId);
         CompanyLeadSettings settings = settingsRepo.findByCompanyId(companyId)
                 .orElseGet(() -> {
                     Company company = companyRepo.findById(companyId)

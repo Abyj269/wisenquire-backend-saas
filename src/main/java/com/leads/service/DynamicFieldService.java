@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DynamicFieldService {
     private final TenantAccess access;
+    private final LeadSettingsWriteScope writeScope;
 
     private final DynamicFieldDefinitionRepository dynamicFieldRepo;
     private final CompanyRepository companyRepo;
@@ -41,10 +42,8 @@ public class DynamicFieldService {
 
     @Transactional
     public DynamicFieldDto createField(Long companyId, DynamicFieldDto dto) {
-        access.company(companyId);
+        Company company = writeScope.check(companyId);
         validateDefinition(dto);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
 
         DynamicFieldDefinition field = DynamicFieldDefinition.builder()
                 .company(company)
@@ -67,7 +66,7 @@ public class DynamicFieldService {
 
     @Transactional
     public DynamicFieldDto updateField(Long id, DynamicFieldDto dto) {
-        access.record(com.leads.model.entity.DynamicFieldDefinition.class, id);
+        writeScope.check(access.record(com.leads.model.entity.DynamicFieldDefinition.class, id).getCompany().getId());
         validateDefinition(dto);
         DynamicFieldDefinition field = dynamicFieldRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Field not found: " + id));
@@ -88,7 +87,7 @@ public class DynamicFieldService {
 
     @Transactional
     public void deleteField(Long id) {
-        access.record(com.leads.model.entity.DynamicFieldDefinition.class, id);
+        writeScope.check(access.record(com.leads.model.entity.DynamicFieldDefinition.class, id).getCompany().getId());
         dynamicFieldRepo.deleteById(id);
     }
 

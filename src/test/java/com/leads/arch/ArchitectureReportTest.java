@@ -42,8 +42,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  */
 class ArchitectureReportTest {
 
-    /** Registered scoped helpers for rule (a): classes whose public methods always enforce scope. Empty in Phase 0. */
-    static final Set<String> SCOPED_HELPERS = Set.of();
+    /**
+     * Registered scoped helpers: classes whose public methods always enforce scope through TenantAccess.
+     * They count as a TenantAccess call for rule (a) and as a record check for rule (b).
+     * Module 04: LeadSettingsWriteScope.check = TenantAccess.company() + the F-12 company-wide rule.
+     */
+    static final Set<String> SCOPED_HELPERS = Set.of("com.leads.service.LeadSettingsWriteScope");
 
     /**
      * TenantAccess methods that check one record's scope. company()/branch()/scope() are the
@@ -87,7 +91,8 @@ class ArchitectureReportTest {
                 @Override public void check(JavaMethod m, ConditionEvents events) {
                     if (m.getOwner().isEquivalentTo(TenantAccess.class)) return;
                     boolean record = m.getMethodCallsFromSelf().stream().anyMatch(c ->
-                            c.getTargetOwner().isEquivalentTo(TenantAccess.class) && RECORD_CHECKS.contains(c.getName()));
+                            c.getTargetOwner().isEquivalentTo(TenantAccess.class) && RECORD_CHECKS.contains(c.getName())
+                            || SCOPED_HELPERS.contains(c.getTargetOwner().getName()));
                     for (JavaMethodCall call : m.getMethodCallsFromSelf()) {
                         if (!call.getName().equals("findById") || !call.getTargetOwner().isAssignableTo(Repository.class)) continue;
                         Class<?> entity = repositoryEntity(call.getTargetOwner());
