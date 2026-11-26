@@ -190,6 +190,17 @@ public class TenantFixture {
         return inTx(() -> persist(DeliveryFailureReason.builder().company(companyRef(s)).reasonText("IT reason " + seq.incrementAndGet()).build()).getId());
     }
 
+    /** Module 15: a fresh saved reply of {@code s}'s company. */
+    public Long freshSavedReply(Slot s) {
+        return inTx(() -> {
+            SavedReply r = new SavedReply();
+            r.setCompanyId(companyId.get(s.company()));
+            r.setTitle("IT Reply " + seq.incrementAndGet());
+            r.setBody("IT saved reply body");
+            return persist(r).getId();
+        });
+    }
+
     /** Module 14: a fresh WhatsApp holiday of {@code s}'s company, applying to {@code s}'s branch. */
     public Long freshHoliday(Slot s) {
         return inTx(() -> {

@@ -37,3 +37,7 @@ Changes take effect within 60 s (flag cache). The frontend picks them up on the 
 
 ## Rollback
 Turn the flag off (above). V110 only inserts the flag row; leave it in place.
+
+## Saved replies (module 15)
+- WhatsApp saved replies (`/settings/saved-replies`) follow the same flag: with `lead_settings.company_wide_writes` ON for an org, only company-level users (and org admins) can add, edit or delete them; branch-level users and agents still read and use them in the inbox. OFF: anyone with `LEAD_SETTINGS` rights writes, as before.
+

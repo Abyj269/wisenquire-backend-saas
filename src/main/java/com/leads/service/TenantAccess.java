@@ -173,6 +173,7 @@ public class TenantAccess {
         else if (value instanceof DynamicFieldDefinition x) company(x.getCompany().getId());
         else if (value instanceof Delivery x) { company(x.getCompany().getId()); sameCompany(x.getCompany().getId(), recordScoped(Lead.class, x.getLead().getId(), false).getCompany()); }
         else if (value instanceof DeliveryFailureReason x) company(x.getCompany().getId());
+        else if (value instanceof SavedReply x) company(x.getCompanyId()); // module 15: company-wide content
         else throw new IllegalArgumentException("Unsupported scoped record type.");
         if (own) ownHook(value);
         return value;

@@ -40,6 +40,7 @@ public final class Matrix {
         all.addAll(WhatsAppConfigRows.specs());
         all.addAll(WhatsAppTemplateRows.specs());
         all.addAll(WhatsAppScheduleRows.specs());
+        all.addAll(SavedReplyRows.specs());
         return all;
     }
 

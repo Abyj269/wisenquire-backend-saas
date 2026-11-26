@@ -16,6 +16,7 @@ import static org.mockito.Mockito.*;
 class SavedReplyServiceTest {
     @Mock TenantAccess access;
     @Mock SavedReplyRepository repository;
+    @Mock LeadSettingsWriteScope writeScope;
     @InjectMocks SavedReplyService service;
     SavedReply reply(long company, boolean active) {
         var reply = new SavedReply(); reply.setId(5L); reply.setCompanyId(company); reply.setActive(active); return reply;
@@ -28,7 +29,7 @@ class SavedReplyServiceTest {
         verify(access, times(2)).company(1L);
     }
     @Test void cannotEditOrDeleteAnotherCompanyReply() {
-        when(repository.findById(5L)).thenReturn(Optional.of(reply(2, true)));
+        when(access.record(SavedReply.class, 5L)).thenReturn(reply(2, true));
         assertThrows(AccessDeniedException.class, () -> service.save(1L, 5L, new SavedReplyService.ReplyInput("Hi", "Hello", true)));
         assertThrows(AccessDeniedException.class, () -> service.delete(1L, 5L));
         verify(repository, never()).save(any()); verify(repository, never()).delete(any());
@@ -37,7 +38,7 @@ class SavedReplyServiceTest {
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         var result = service.save(1L, null, new SavedReplyService.ReplyInput(" Greeting ", " Hello\nHow can we help? ", true));
         assertEquals(1L, result.getCompanyId()); assertEquals("Greeting", result.getTitle());
-        assertEquals("Hello\nHow can we help?", result.getBody()); verify(access).company(1L);
+        assertEquals("Hello\nHow can we help?", result.getBody()); verify(writeScope).check(1L);
     }
     @Test void deniedCompanyCannotReadReplies() {
         doThrow(new AccessDeniedException("Denied")).when(access).company(2L);
@@ -50,5 +51,13 @@ class SavedReplyServiceTest {
             assertEquals(2, validator.validate(new SavedReplyService.ReplyInput(" ", " ", true)).size());
             assertEquals(2, validator.validate(new SavedReplyService.ReplyInput("x".repeat(101), "x".repeat(4097), true)).size());
         }
+    }
+    /** Module 15 P1: writes go through the F-12 write scope; a refusal stops before any load or save. */
+    @Test void writesUseTheCompanyWideWriteScope() {
+        doThrow(new AccessDeniedException("Only company-level admins can change lead settings.")).when(writeScope).check(1L);
+        assertThrows(AccessDeniedException.class, () -> service.save(1L, null, new SavedReplyService.ReplyInput("Hi", "Hello", true)));
+        assertThrows(AccessDeniedException.class, () -> service.delete(1L, 5L));
+        verifyNoInteractions(repository);
+        verify(access, never()).record(any(), any());
     }
 }
