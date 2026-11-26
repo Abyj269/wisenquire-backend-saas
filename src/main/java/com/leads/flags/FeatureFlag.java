@@ -27,6 +27,8 @@ public enum FeatureFlag {
     DOCUMENTS_COMPANY_CODE_PREFIX("documents.company_code_prefix", false, "module-06", "2027-12-31"),
     OWN_SCOPE_ENFORCED("own_scope.enforced", true, "module-01", "2027-12-31"),
     OWN_SCOPE_INCLUDE_UNASSIGNED("own_scope.include_unassigned", true, "module-01", "2027-12-31"),
+    /** Module 07 P1 (V73): with own_scope.enforced, a customer is also visible through a chat assigned to me. Default OFF until module 12 P1. */
+    OWN_SCOPE_CUSTOMER_VIA_CHATS("own_scope.customer_via_chats", false, "module-07", "2027-12-31"),
     AUTH_SUBJECT_USER_ID("auth.subject_user_id", false, "module-02", "2027-06-30"),
     AUTH_REFRESH_TOKENS("auth.refresh_tokens", true, "module-02", "2027-06-30"),
     BROADCAST_CHUNKED_TX("broadcast.chunked_tx", false, "module-16", "2027-06-30"),

@@ -1,4 +1,4 @@
-# Runbook: leads, OWN scope and document numbers (module 06 P1)
+# Runbook: leads and customers, OWN scope, and document numbers (modules 06–07 P1)
 
 ## OWN scope for leads (flags already exist since module 01)
 - `own_scope.enforced` (default OFF), per org. **ON:** users whose role has data scope OWN (e.g. the "Agent" template) see and act only on leads assigned to them. This covers:
@@ -20,6 +20,16 @@ DELETE FROM feature_flag_overrides WHERE flag_key IN ('own_scope.enforced','own_
 ```
 
 **Who is affected:** users whose role has `data_scope = 'OWN'`. Existing client roles stay LEVEL (owner decision); new self-signup tenants get an OWN "Agent" template.
+
+## Customers (module 07 P1)
+- **F-11 fix (no flag):** the phone typeahead (`/customers/suggest`, used when creating a lead and in the inbox) only suggests customers with a lead in the caller's branches, the same rule as the customer list. Lead creation is unaffected: an existing customer with that phone is still reused, never duplicated.
+- **With `own_scope.enforced` on:** OWN users see only customers of their leads, plus unassigned leads with `include_unassigned`. This applies to the list (titled "My Customers"), the typeahead, and the detail, logs and notes. A deep link to another customer shows "Customer not available".
+- **Flag `own_scope.customer_via_chats` (V73, default OFF):** also shows customers through a WhatsApp chat assigned to the user. **Keep it OFF until module 12 (conversation OWN rules) is live**, then turn it on per org:
+```sql
+INSERT INTO feature_flag_overrides (flag_key, organization_id, enabled, set_by, reason)
+VALUES ('own_scope.customer_via_chats', <org_id>, 1, '<you>', 'after module 12');
+```
+- V72 adds indexes `leads(customer_id, assigned_to_id)` and `whatsapp_conversations(assigned_agent_id, lead_id)`. They are online, additive DDL; on a large live table, run the deploy outside busy hours.
 
 ## Company timezone (no flag)
 - Lead list, Kanban, dashboard and report date filters now cut days at the **company's** midnight. Companies on Asia/Dubai (the server zone) see no change.

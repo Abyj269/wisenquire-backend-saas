@@ -28,6 +28,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CustomerService {
     private final TenantAccess access;
+    private final CompanyClock companyClock;
     private final CompanyLeadSettingsRepository settingsRepo;
 
     /** No activity (visit/new lead) for this many days after a conversion flips a customer from CONVERTED to LOST. */
@@ -139,7 +140,7 @@ public class CustomerService {
         int converted = orZero(customer.getConvertedLeadsCount());
         if (converted > 0) {
             long daysSince = customer.getLastLeadAt() != null
-                    ? ChronoUnit.DAYS.between(customer.getLastLeadAt(), LocalDateTime.now())
+                    ? ChronoUnit.DAYS.between(customer.getLastLeadAt(), companyClock.serverNow())
                     : Long.MAX_VALUE;
             return daysSince >= lostAfterDays(customer.getCompany().getId()) ? CustomerStatus.LOST : CustomerStatus.CONVERTED;
         }
@@ -160,9 +161,67 @@ public class CustomerService {
         return CustomerStatus.EXISTING;
     }
 
-    /** Display-time status used by mapToDto/mapToSummaryDto — zero extra queries. */
+    /**
+     * The company's "lost after N days" setting. Module 07 P1: read once per company per transaction
+     * (customer, lead and delivery lists map many customers; it was one query per row).
+     */
     private int lostAfterDays(Long companyId) {
+        java.util.Map<Long, Integer> memo = lostDaysMemo();
+        return memo != null ? memo.computeIfAbsent(companyId, this::loadLostAfterDays) : loadLostAfterDays(companyId);
+    }
+
+    private int loadLostAfterDays(Long companyId) {
         return settingsRepo.findByCompanyId(companyId).map(s -> s.getCustomerLostAfterDays()!=null ? s.getCustomerLostAfterDays() : 60).orElse(60);
+    }
+
+    private static final Object LOST_DAYS_MEMO = new Object();
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<Long, Integer> lostDaysMemo() {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) return null;
+        var memo = (java.util.Map<Long, Integer>) org.springframework.transaction.support.TransactionSynchronizationManager.getResource(LOST_DAYS_MEMO);
+        if (memo == null) {
+            memo = new java.util.HashMap<>();
+            org.springframework.transaction.support.TransactionSynchronizationManager.bindResource(LOST_DAYS_MEMO, memo);
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override public void afterCompletion(int status) {
+                    org.springframework.transaction.support.TransactionSynchronizationManager.unbindResourceIfPossible(LOST_DAYS_MEMO);
+                }
+            });
+        }
+        return memo;
+    }
+
+    /**
+     * D14 (module 07 P1): an OWN user sees a customer that has a lead assigned to them (or an
+     * unassigned one with include_unassigned), or, with own_scope.customer_via_chats, a chat assigned
+     * to them. Same rule as TenantAccess.record(Customer), for lists and the typeahead.
+     */
+    private static jakarta.persistence.criteria.Predicate ownCustomerPredicate(jakarta.persistence.criteria.Root<Customer> root,
+            jakarta.persistence.criteria.CriteriaQuery<?> query, jakarta.persistence.criteria.CriteriaBuilder cb,
+            Long me, boolean unassigned, boolean viaChats) {
+        jakarta.persistence.criteria.Subquery<Long> leads = query.subquery(Long.class);
+        jakarta.persistence.criteria.Root<Lead> l = leads.from(Lead.class);
+        var assignee = l.join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+        leads.select(l.get("id")).where(cb.equal(l.get("customer"), root),
+                unassigned ? cb.or(cb.equal(assignee.get("id"), me), cb.isNull(assignee.get("id"))) : cb.equal(assignee.get("id"), me));
+        jakarta.persistence.criteria.Predicate visible = cb.exists(leads);
+        if (viaChats) {
+            jakarta.persistence.criteria.Subquery<Long> chats = query.subquery(Long.class);
+            jakarta.persistence.criteria.Root<WhatsAppConversation> c = chats.from(WhatsAppConversation.class);
+            chats.select(c.get("id")).where(cb.equal(c.get("lead").get("customer"), root), cb.equal(c.get("assignedAgent").get("id"), me));
+            visible = cb.or(visible, cb.exists(chats));
+        }
+        return visible;
+    }
+
+    /** BRANCH-level callers: the customer has a lead in one of their branches (customers are company-wide records). */
+    private static jakarta.persistence.criteria.Predicate inPermittedBranches(jakarta.persistence.criteria.Root<Customer> root,
+            jakarta.persistence.criteria.CriteriaQuery<?> query, jakarta.persistence.criteria.CriteriaBuilder cb, List<Long> permittedBranches) {
+        jakarta.persistence.criteria.Subquery<Long> sub = query.subquery(Long.class);
+        jakarta.persistence.criteria.Root<Lead> lead = sub.from(Lead.class);
+        sub.select(lead.get("id")).where(cb.equal(lead.get("customer"), root), lead.get("branch").get("id").in(permittedBranches));
+        return cb.exists(sub);
     }
     @Transactional
     public void refreshLifecycle(Customer customer) {
@@ -176,6 +235,12 @@ public class CustomerService {
 
     private CustomerStatus displayStatus(Customer customer) {
         return computeStatus(customer, false);
+    }
+
+    /** Module 07 P1: the acting user is resolved here (was passed in by the controller). */
+    @Transactional
+    public CustomerDto updateCustomer(Long id, CustomerUpdateRequest req) {
+        return updateCustomer(id, req, authService.getCurrentUser());
     }
 
     @Transactional
@@ -232,7 +297,14 @@ public class CustomerService {
                                             Boolean blocked, Pageable pageable) {
         access.scope(companyId, branchId);
         com.leads.util.InputRules.dateRange(fromDate,toDate);
-        final LocalDateTime lostCutoff=LocalDateTime.now().minusDays(lostAfterDays(companyId));
+        final LocalDateTime lostCutoff=companyClock.serverNow().minusDays(lostAfterDays(companyId));
+        // D14 / D15 (module 07 P1): OWN visibility, and "from"/"to" as company-local days.
+        final Long ownMe = access.ownerFilter();
+        final boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
+        final boolean ownViaChats = ownMe != null && access.ownCustomerViaChats();
+        final Company zoneCompany = companyId != null ? access.company(companyId) : null;
+        final LocalDateTime fromBound = fromDate == null ? null : companyClock.range(zoneCompany, fromDate, fromDate).start();
+        final LocalDateTime toBound = toDate == null ? null : companyClock.range(zoneCompany, toDate, toDate).endExclusive();
         pageable=com.leads.util.InputRules.page(pageable,"lastLeadAt","createdAt","name","mobileNumber","status","id");
         // A Customer record is intentionally company-wide, not branch-owned
         // (see resolveOrCreateForLead) - a repeat visitor at a different
@@ -246,16 +318,8 @@ public class CustomerService {
         Specification<Customer> spec = (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
 
-            if (permittedBranches != null) {
-                jakarta.persistence.criteria.Subquery<Long> permittedSub = query.subquery(Long.class);
-                jakarta.persistence.criteria.Root<Lead> permittedLeadRoot = permittedSub.from(Lead.class);
-                permittedSub.select(permittedLeadRoot.get("id"));
-                permittedSub.where(cb.and(
-                        cb.equal(permittedLeadRoot.get("customer"), root),
-                        permittedLeadRoot.get("branch").get("id").in(permittedBranches)
-                ));
-                predicates.add(cb.exists(permittedSub));
-            }
+            if (permittedBranches != null) predicates.add(inPermittedBranches(root, query, cb, permittedBranches));
+            if (ownMe != null) predicates.add(ownCustomerPredicate(root, query, cb, ownMe, ownUnassigned, ownViaChats));
 
             if (companyId != null) {
                 predicates.add(cb.equal(root.get("company").get("id"), companyId));
@@ -268,10 +332,10 @@ public class CustomerService {
                 predicates.add(cb.like(cb.lower(root.get("name")), "%" + name.trim().toLowerCase() + "%"));
             }
             if (fromDate != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromDate.atStartOfDay()));
+                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromBound));
             }
             if (toDate != null) {
-                predicates.add(cb.lessThan(root.get("createdAt"), toDate.plusDays(1).atStartOfDay()));
+                predicates.add(cb.lessThan(root.get("createdAt"), toBound));
             }
             if (mobile != null && !mobile.isBlank()) {
                 predicates.add(cb.like(root.get("mobileNormalized"), "%" + PhoneNumberUtil.lastSignificantDigits(mobile) + "%"));
@@ -352,7 +416,20 @@ public class CustomerService {
         access.company(companyId);
         String normalized = PhoneNumberUtil.lastSignificantDigits(partialPhone);
         if (normalized.isBlank()) return List.of();
-        return customerRepo.suggestByPartialMobile(companyId, normalized, PageRequest.of(0, 8, Sort.by("lastLeadAt").descending()))
+        // F-11 (module 07 P1): the same branch and OWN visibility as the customer list (was: the whole company).
+        final List<Long> permittedBranches = access.branchIds();
+        final Long ownMe = access.ownerFilter();
+        final boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
+        final boolean ownViaChats = ownMe != null && access.ownCustomerViaChats();
+        Specification<Customer> spec = (root, query, cb) -> {
+            List<jakarta.persistence.criteria.Predicate> p = new ArrayList<>();
+            p.add(cb.equal(root.get("company").get("id"), companyId));
+            p.add(cb.like(root.get("mobileNormalized"), "%" + normalized + "%"));
+            if (permittedBranches != null) p.add(inPermittedBranches(root, query, cb, permittedBranches));
+            if (ownMe != null) p.add(ownCustomerPredicate(root, query, cb, ownMe, ownUnassigned, ownViaChats));
+            return cb.and(p.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        };
+        return customerRepo.findAll(spec, PageRequest.of(0, 8, Sort.by("lastLeadAt").descending())).getContent()
                 .stream()
                 .map(c -> {
                     CustomerSummaryDto dto = mapToSummaryDto(c);

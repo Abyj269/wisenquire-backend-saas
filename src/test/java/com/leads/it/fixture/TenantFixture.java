@@ -123,8 +123,14 @@ public class TenantFixture {
      * handling as @CreationTimestamp), so date-filter tests compare like with like. Module 06.
      */
     public void setLeadCreatedAt(Long leadId, java.time.LocalDateTime serverWallClock) {
-        inTx(() -> em.createNativeQuery("UPDATE leads SET created_at = :t WHERE id = :id")
-                .setParameter("t", serverWallClock).setParameter("id", leadId).executeUpdate());
+        setCreatedAt("leads", leadId, serverWallClock);
+    }
+
+    /** Same, for any fixture table with created_at ({@code leads}, {@code customers}, ...). Module 07. */
+    public void setCreatedAt(String table, Long id, java.time.LocalDateTime serverWallClock) {
+        if (!table.matches("[a-z_]+")) throw new IllegalArgumentException(table);
+        inTx(() -> em.createNativeQuery("UPDATE " + table + " SET created_at = :t WHERE id = :id")
+                .setParameter("t", serverWallClock).setParameter("id", id).executeUpdate());
     }
 
     public Long customerOfLead(Long leadId) { return inTx(() -> em.find(Lead.class, leadId).getCustomer().getId()); }

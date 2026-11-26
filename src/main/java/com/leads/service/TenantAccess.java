@@ -186,6 +186,12 @@ public class TenantAccess {
         return me == null ? null : me.getId();
     }
 
+    /** With an active OWN scope: whether a customer is also visible through a chat assigned to me (flag own_scope.customer_via_chats, module 07). */
+    public boolean ownCustomerViaChats() {
+        User me = ownUser();
+        return me != null && flags.isOn(com.leads.flags.FeatureFlag.OWN_SCOPE_CUSTOMER_VIA_CHATS, me.getOrganization().getId());
+    }
+
     /** With an active OWN scope: whether unassigned leads/conversations are also visible (flag own_scope.include_unassigned). */
     public boolean ownIncludesUnassigned() {
         User me = ownUser();
@@ -235,6 +241,9 @@ public class TenantAccess {
                         + " AND (a.id = :me OR (:unassigned = true AND a IS NULL))", Long.class)
                 .setParameter("cid", c.getId()).setParameter("me", me.getId()).setParameter("unassigned", unassigned).getSingleResult();
         if (leadsSeen > 0) return true;
+        // Module 07 P1: the chat half (a chat assigned to me links to this customer) waits for module 12's
+        // OWN rules for conversations: flag own_scope.customer_via_chats, default OFF.
+        if (!flags.isOn(com.leads.flags.FeatureFlag.OWN_SCOPE_CUSTOMER_VIA_CHATS, me.getOrganization().getId())) return false;
         Long chatsSeen = em.createQuery("SELECT COUNT(c) FROM WhatsAppConversation c JOIN c.lead l LEFT JOIN c.assignedAgent a"
                         + " LEFT JOIN l.assignedTo la WHERE l.customer.id = :cid AND (a.id = :me OR la.id = :me)", Long.class)
                 .setParameter("cid", c.getId()).setParameter("me", me.getId()).getSingleResult();

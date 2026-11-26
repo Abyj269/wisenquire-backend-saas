@@ -23,8 +23,7 @@ public interface CustomerRepository extends JpaRepository<Customer, Long>, JpaSp
 
     List<Customer> findByCompanyIdAndHomeBranchId(Long companyId, Long branchId);
 
-    @Query("SELECT c FROM Customer c WHERE c.company.id = :companyId AND c.mobileNormalized LIKE CONCAT('%', :partial, '%') ORDER BY c.lastLeadAt DESC")
-    List<Customer> suggestByPartialMobile(@Param("companyId") Long companyId, @Param("partial") String partial, Pageable pageable);
+    // Module 07 P1: the typeahead is a Specification in CustomerService.suggest (branch + OWN scope, F-11).
 
     long countByCompanyId(Long companyId);
 }

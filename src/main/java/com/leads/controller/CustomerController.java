@@ -3,7 +3,6 @@ package com.leads.controller;
 import com.leads.dto.common.AddNoteRequest;
 import com.leads.dto.customer.*;
 import com.leads.dto.lead.LeadDto;
-import com.leads.model.entity.User;
 import com.leads.model.enums.CustomerStatus;
 import com.leads.service.AuthService;
 import com.leads.service.CustomerService;
@@ -29,14 +28,12 @@ public class CustomerController {
 
     private final CustomerService customerService;
     private final LeadService leadService;
-    private final AuthService authService;
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('CUSTOMERS:EDIT')")
     @Operation(summary = "Update Customer", description = "Edits customer details; every changed field is recorded in the customer's change log.")
     public ResponseEntity<CustomerDto> updateCustomer(@PathVariable Long id, @Valid @RequestBody CustomerUpdateRequest req) {
-        User currentUser = authService.getCurrentUser();
-        return ResponseEntity.ok(customerService.updateCustomer(id, req, currentUser));
+        return ResponseEntity.ok(customerService.updateCustomer(id, req));
     }
 
     @GetMapping("/{id}")
