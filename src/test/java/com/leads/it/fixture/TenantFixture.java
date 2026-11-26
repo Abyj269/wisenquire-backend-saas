@@ -39,6 +39,7 @@ public class TenantFixture {
     private final Map<String, Long> statusId = new HashMap<>();
     private final Map<String, Long> sourceId = new HashMap<>();
     private final Map<String, Long> lostReasonId = new HashMap<>();
+    private final Map<String, Long> failureReasonId = new HashMap<>();
     private final Map<String, Long> companyWideBroadcastId = new HashMap<>();
     private final Map<Slot, Long> branchId = new EnumMap<>(Slot.class);
     private final Map<Slot, Long> configId = new EnumMap<>(Slot.class);
@@ -77,6 +78,7 @@ public class TenantFixture {
     public Long status(Slot s) { return ensureBuilt().statusId.get(s.company()); }
     public Long source(Slot s) { return ensureBuilt().sourceId.get(s.company()); }
     public Long lostReason(Slot s) { return ensureBuilt().lostReasonId.get(s.company()); }
+    public Long failureReason(Slot s) { return ensureBuilt().failureReasonId.get(s.company()); }
     public Long user(char org, Persona p) { return ensureBuilt().userId.get(org + ":" + p); }
     /** The fixture role a persona of {@code org} holds. */
     public Long role(char org, Persona p) { return ensureBuilt().roleId.get(org + ":" + p); }
@@ -170,6 +172,22 @@ public class TenantFixture {
                     .assignedTo(assignedTo == null ? null : em.getReference(User.class, assignedTo)).build();
             return persist(d).getId();
         });
+    }
+
+    /** Module 09: a fresh delivery on a fresh lead of {@code s}, in {@code status}; PENDING_APPROVAL carries a close request. */
+    public Long freshDeliveryIn(Slot s, DeliveryStatus status, Long assignedTo) {
+        Long id = freshDelivery(s, freshLead(s), assignedTo);
+        inTx(() -> {
+            Delivery d = em.find(Delivery.class, id);
+            d.setStatus(status);
+            if (status == DeliveryStatus.PENDING_APPROVAL) d.setRequestedAction(RequestedDeliveryAction.CLOSE);
+            return null;
+        });
+        return id;
+    }
+
+    public Long freshFailureReason(Slot s) {
+        return inTx(() -> persist(DeliveryFailureReason.builder().company(companyRef(s)).reasonText("IT reason " + seq.incrementAndGet()).build()).getId());
     }
 
     // ---- module 03: fresh tenant-admin records for rows that write ------------------------------
@@ -323,6 +341,9 @@ public class TenantFixture {
                 persist(LeadStatus.builder().company(company).statusName("Lost").statusCode("LOST").stageType(StageType.LOST).sortOrder(9).build());
                 sourceId.put(code, persist(LeadSource.builder().company(company).sourceName("Walk-in").sourceCode("WALKIN").build()).getId());
                 lostReasonId.put(code, persist(LeadLostReason.builder().company(company).reasonText("Price").build()).getId());
+                // Module 09: the delivery module is on for every fixture company, with one failure reason.
+                persist(CompanyDeliverySettings.builder().company(company).deliveryModuleEnabled(true).build());
+                failureReasonId.put(code, persist(DeliveryFailureReason.builder().company(company).reasonText("IT not home").build()).getId());
                 for (char b : stateOrg ? new char[]{'a'} : new char[]{'a', 'b'}) {
                     Slot slot = Slot.valueOf(code + b);
                     branchId.put(slot, persist(Branch.builder().company(company).name("IT Branch " + slot).code("IT-" + slot).build()).getId());

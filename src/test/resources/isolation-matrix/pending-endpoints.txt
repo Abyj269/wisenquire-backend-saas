@@ -6,28 +6,6 @@
 # (EndpointCoverageIT.PENDING_CEILING); lower the ceiling whenever lines are removed.
 
 # --- module 02 auth-identity
-# --- module 09 deliveries
-DELETE /settings/delivery-failure-reasons/{id}  # module 09 deliveries (DeliverySettingsController)
-GET /deliveries  # module 09 deliveries (DeliveryController)
-GET /deliveries/unassigned-today-count  # module 09 deliveries (DeliveryController)
-GET /deliveries/{id}  # module 09 deliveries (DeliveryController)
-GET /deliveries/{id}/timeline  # module 09 deliveries (DeliveryController)
-GET /settings/delivery-failure-reasons  # module 09 deliveries (DeliverySettingsController)
-GET /settings/delivery-settings  # module 09 deliveries (DeliverySettingsController)
-POST /deliveries  # module 09 deliveries (DeliveryController)
-POST /deliveries/assign  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/approve  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/cancel  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/mark-delivered  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/mark-not-delivered  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/out-for-delivery  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/reject  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/request-close  # module 09 deliveries (DeliveryController)
-POST /deliveries/{id}/request-postpone  # module 09 deliveries (DeliveryController)
-POST /settings/delivery-failure-reasons  # module 09 deliveries (DeliverySettingsController)
-PUT /deliveries/{id}  # module 09 deliveries (DeliveryController)
-PUT /settings/delivery-failure-reasons/{id}  # module 09 deliveries (DeliverySettingsController)
-PUT /settings/delivery-settings  # module 09 deliveries (DeliverySettingsController)
 # --- module 11 whatsapp-config-onboarding
 DELETE /whatsapp/configs/{id}  # module 11 whatsapp-config-onboarding (WhatsAppConfigController)
 GET /whatsapp/configs  # module 11 whatsapp-config-onboarding (WhatsAppConfigController)

@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DeliveryService {
     private final TenantAccess access;
+    private final CompanyClock companyClock;
     private final DocumentNumberService numbers;
 
     private final DeliveryRepository deliveryRepo;
@@ -47,7 +48,7 @@ public class DeliveryService {
         if (lead.getStatus().getStageType() == StageType.LOST) {
             throw new IllegalArgumentException("A delivery cannot be scheduled on a lost lead.");
         }
-        if (req.getScheduledDate().isBefore(LocalDate.now())) {
+        if (req.getScheduledDate().isBefore(companyClock.today(lead.getCompany()))) { // D15: the company's today
             throw new IllegalArgumentException("The scheduled date cannot be in the past.");
         }
 
@@ -55,6 +56,7 @@ public class DeliveryService {
 
         User assignedTo = null;
         if (req.getAssignedToUserId() != null) {
+            denyOwn("assign deliveries");
             access.permission("DELIVERIES:ASSIGN");
             assignedTo = userRepo.findById(req.getAssignedToUserId())
                     .orElseThrow(() -> new IllegalArgumentException("Assignee not found: " + req.getAssignedToUserId()));
@@ -119,12 +121,14 @@ public class DeliveryService {
         delivery.setDeliveryNotes(req.getDeliveryNotes());
 
         if (req.getAssignedToUserId() == null && delivery.getAssignedTo() != null) {
+            denyOwn("unassign deliveries");
             access.permission("DELIVERIES:ASSIGN");
             delivery.setAssignedTo(null);
             delivery.setAssignedBy(currentUser);
             recordActivity(delivery.getLead(), delivery, ActivityType.REASSIGNMENT, "Delivery Unassigned", "Assignment cleared", currentUser);
         } else if (req.getAssignedToUserId() != null
                 && (delivery.getAssignedTo() == null || !delivery.getAssignedTo().getId().equals(req.getAssignedToUserId()))) {
+            denyOwn("assign deliveries");
             access.permission("DELIVERIES:ASSIGN");
             User oldUser = delivery.getAssignedTo();
             User newUser = userRepo.findById(req.getAssignedToUserId())
@@ -141,6 +145,7 @@ public class DeliveryService {
 
     @Transactional
     public void assignDeliveries(DeliveryAssignRequest req) {
+        denyOwn("assign deliveries");
         access.permission("DELIVERIES:ASSIGN");
         User assignToUser = userRepo.findById(req.getAssignToUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Assignee not found: " + req.getAssignToUserId()));
@@ -160,7 +165,7 @@ public class DeliveryService {
 
     @Transactional
     public DeliveryDto markOutForDelivery(Long id) {
-        Delivery delivery = access.record(Delivery.class, id);
+        Delivery delivery = requireOwnAssignee(access.record(Delivery.class, id));
         requireStatus(delivery, "start the delivery run", DeliveryStatus.SCHEDULED);
         requireAssigned(delivery);
 
@@ -173,7 +178,7 @@ public class DeliveryService {
 
     @Transactional
     public DeliveryDto markDelivered(Long id, DeliveryMarkDeliveredRequest req) {
-        Delivery delivery = access.record(Delivery.class, id);
+        Delivery delivery = requireOwnAssignee(access.record(Delivery.class, id));
         requireStatus(delivery, "mark this delivery as delivered", DeliveryStatus.SCHEDULED, DeliveryStatus.OUT_FOR_DELIVERY);
         requireAssigned(delivery);
 
@@ -191,7 +196,7 @@ public class DeliveryService {
 
     @Transactional
     public DeliveryDto markNotDelivered(Long id, DeliveryMarkNotDeliveredRequest req) {
-        Delivery delivery = access.record(Delivery.class, id);
+        Delivery delivery = requireOwnAssignee(access.record(Delivery.class, id));
         requireStatus(delivery, "mark this delivery as not delivered", DeliveryStatus.SCHEDULED, DeliveryStatus.OUT_FOR_DELIVERY);
         requireAssigned(delivery);
 
@@ -222,9 +227,9 @@ public class DeliveryService {
 
     @Transactional
     public DeliveryDto requestPostpone(Long id, DeliveryPostponeRequest req) {
-        Delivery delivery = access.record(Delivery.class, id);
+        Delivery delivery = requireOwnAssignee(access.record(Delivery.class, id));
         requireStatus(delivery, "request a postponement", DeliveryStatus.NOT_DELIVERED);
-        if (req.getRequestedNewDate().isBefore(LocalDate.now())) {
+        if (req.getRequestedNewDate().isBefore(companyClock.today(delivery.getCompany()))) { // D15: the company's today
             throw new IllegalArgumentException("The new date cannot be in the past.");
         }
 
@@ -256,7 +261,7 @@ public class DeliveryService {
 
     @Transactional
     public DeliveryDto requestClose(Long id, DeliveryCloseRequest req) {
-        Delivery delivery = access.record(Delivery.class, id);
+        Delivery delivery = requireOwnAssignee(access.record(Delivery.class, id));
         requireStatus(delivery, "request to close this delivery", DeliveryStatus.NOT_DELIVERED);
 
         User currentUser = authService.getCurrentUser();
@@ -285,6 +290,7 @@ public class DeliveryService {
     @Transactional
     public DeliveryDto approve(Long id) {
         Delivery delivery = access.record(Delivery.class, id);
+        denyOwn("approve delivery requests");
         requireStatus(delivery, "approve this request", DeliveryStatus.PENDING_APPROVAL);
 
         User currentUser = authService.getCurrentUser();
@@ -312,6 +318,7 @@ public class DeliveryService {
     @Transactional
     public DeliveryDto reject(Long id, DeliveryRejectRequest req) {
         Delivery delivery = access.record(Delivery.class, id);
+        denyOwn("reject delivery requests");
         requireStatus(delivery, "reject this request", DeliveryStatus.PENDING_APPROVAL);
 
         User currentUser = authService.getCurrentUser();
@@ -330,6 +337,7 @@ public class DeliveryService {
     @Transactional
     public DeliveryDto cancel(Long id, DeliveryCancelRequest req) {
         Delivery delivery = access.record(Delivery.class, id);
+        denyOwn("cancel deliveries");
         if (isTerminal(delivery.getStatus())) {
             throw new IllegalArgumentException("This delivery is already " + delivery.getStatus() + " and can't be cancelled.");
         }
@@ -358,10 +366,13 @@ public class DeliveryService {
         access.scope(companyId, branchId);
         com.leads.util.InputRules.dateRange(scheduledDateFrom, scheduledDateTo);
         List<Long> permittedBranches = access.branchIds();
+        final Long ownMe = access.ownerFilter();
+        final boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
 
         Specification<Delivery> spec = (root, query, cb) -> {
             var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
             if (permittedBranches != null) predicates.add(root.get("branch").get("id").in(permittedBranches));
+            if (ownMe != null) predicates.add(ownDeliveryPredicate(root, cb, ownMe, ownUnassigned));
             if (companyId != null) predicates.add(cb.equal(root.get("company").get("id"), companyId));
             if (branchId != null) predicates.add(cb.equal(root.get("branch").get("id"), branchId));
             if (status != null) predicates.add(cb.equal(root.get("status"), status));
@@ -391,11 +402,15 @@ public class DeliveryService {
     public long countUnassignedToday(Long companyId, Long branchId) {
         access.scope(companyId, branchId);
         List<Long> permittedBranches = access.branchIds();
-        LocalDate today = LocalDate.now();
+        // D15 (module 09 P1): the company's today (was the server date).
+        LocalDate today = companyId != null ? companyClock.today(access.company(companyId)) : companyClock.serverNow().toLocalDate();
+        final Long ownMe = access.ownerFilter();
+        final boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
 
         Specification<Delivery> spec = (root, query, cb) -> {
             var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
             if (permittedBranches != null) predicates.add(root.get("branch").get("id").in(permittedBranches));
+            if (ownMe != null) predicates.add(ownDeliveryPredicate(root, cb, ownMe, ownUnassigned));
             if (companyId != null) predicates.add(cb.equal(root.get("company").get("id"), companyId));
             if (branchId != null) predicates.add(cb.equal(root.get("branch").get("id"), branchId));
             predicates.add(cb.isNull(root.get("assignedTo")));
@@ -427,6 +442,33 @@ public class DeliveryService {
     private void requireStatus(Delivery delivery, String action, DeliveryStatus... allowed) {
         for (DeliveryStatus s : allowed) if (delivery.getStatus() == s) return;
         throw new IllegalArgumentException("Cannot " + action + " while the delivery is " + delivery.getStatus() + ".");
+    }
+
+    /** D14: assigned to me, or its lead is mine (or unassigned with include_unassigned). Same rule as record(Delivery). */
+    private static jakarta.persistence.criteria.Predicate ownDeliveryPredicate(jakarta.persistence.criteria.Root<Delivery> root,
+            jakarta.persistence.criteria.CriteriaBuilder cb, Long me, boolean includeUnassigned) {
+        var agent = root.join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+        var leadOwner = root.join("lead").join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+        var visible = cb.or(cb.equal(agent.get("id"), me), cb.equal(leadOwner.get("id"), me));
+        return includeUnassigned ? cb.or(visible, cb.isNull(leadOwner.get("id"))) : visible;
+    }
+
+    /**
+     * D14 (module 09 P1): with OWN scope, only the assigned delivery agent may record what happened
+     * (out for delivery, delivered, not delivered, postpone, close), even when the delivery is
+     * visible through the agent's lead.
+     */
+    private Delivery requireOwnAssignee(Delivery delivery) {
+        Long me = access.ownerFilter();
+        if (me != null && (delivery.getAssignedTo() == null || !me.equals(delivery.getAssignedTo().getId()))) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the assigned delivery agent can update this delivery.");
+        }
+        return delivery;
+    }
+
+    /** D14 (module 09 P1): OWN users never assign, approve, reject or cancel deliveries, whatever their permissions. */
+    private void denyOwn(String action) {
+        if (access.ownerFilter() != null) throw new org.springframework.security.access.AccessDeniedException("Your role cannot " + action + ".");
     }
 
     /** A delivery agent has to actually be assigned before anyone can record what happened on the ground. */

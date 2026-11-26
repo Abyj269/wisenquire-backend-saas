@@ -47,7 +47,7 @@ class ArchitectureReportTest {
      * They count as a TenantAccess call for rule (a) and as a record check for rule (b).
      * Module 04/05: LeadSettingsWriteScope / ProductWriteScope.check = TenantAccess.company() + the F-12 company-wide rule.
      */
-    static final Set<String> SCOPED_HELPERS = Set.of("com.leads.service.LeadSettingsWriteScope", "com.leads.service.ProductWriteScope");
+    static final Set<String> SCOPED_HELPERS = Set.of("com.leads.service.LeadSettingsWriteScope", "com.leads.service.ProductWriteScope", "com.leads.service.DeliverySettingsWriteScope");
 
     /**
      * TenantAccess methods that check one record's scope. company()/branch()/scope() are the

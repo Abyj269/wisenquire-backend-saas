@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DeliverySettingsService {
     private final TenantAccess access;
+    private final DeliverySettingsWriteScope writeScope;
 
     private final DeliveryFailureReasonRepository failureReasonRepo;
     private final CompanyDeliverySettingsRepository settingsRepo;
@@ -36,9 +37,7 @@ public class DeliverySettingsService {
 
     @Transactional
     public DeliveryFailureReasonDto createFailureReason(Long companyId, DeliveryFailureReasonDto dto) {
-        access.company(companyId);
-        Company company = companyRepo.findById(companyId)
-                .orElseThrow(() -> new IllegalArgumentException("Company not found: " + companyId));
+        Company company = writeScope.check(companyId);
 
         DeliveryFailureReason reason = DeliveryFailureReason.builder()
                 .company(company)
@@ -53,17 +52,19 @@ public class DeliverySettingsService {
     @Transactional
     public DeliveryFailureReasonDto updateFailureReason(Long id, DeliveryFailureReasonDto dto) {
         DeliveryFailureReason reason = access.record(DeliveryFailureReason.class, id);
+        writeScope.check(reason.getCompany().getId());
 
         reason.setReasonText(dto.getReasonText());
-        reason.setSortOrder(dto.getSortOrder());
-        reason.setIsActive(dto.getIsActive());
+        // NOT NULL columns: a field missing from the body keeps its value (was a 500 on the constraint).
+        if (dto.getSortOrder() != null) reason.setSortOrder(dto.getSortOrder());
+        if (dto.getIsActive() != null) reason.setIsActive(dto.getIsActive());
 
         return mapFailureReasonToDto(failureReasonRepo.save(reason));
     }
 
     @Transactional
     public void deleteFailureReason(Long id) {
-        access.record(DeliveryFailureReason.class, id);
+        writeScope.check(access.record(DeliveryFailureReason.class, id).getCompany().getId());
         failureReasonRepo.deleteById(id);
     }
 
@@ -103,7 +104,7 @@ public class DeliverySettingsService {
 
     @Transactional
     public CompanyDeliverySettingsDto updateCompanyDeliverySettings(Long companyId, CompanyDeliverySettingsDto dto) {
-        access.company(companyId);
+        writeScope.check(companyId);
         CompanyDeliverySettings settings = settingsRepo.findByCompanyId(companyId)
                 .orElseGet(() -> {
                     Company company = companyRepo.findById(companyId)

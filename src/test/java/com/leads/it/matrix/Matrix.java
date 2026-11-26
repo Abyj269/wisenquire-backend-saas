@@ -35,6 +35,8 @@ public final class Matrix {
         all.addAll(LeadSettingsRows.specs());
         all.addAll(ProductRows.specs());
         all.addAll(QuotationRows.specs());
+        all.addAll(DeliveryRows.specs());
+        all.addAll(DeliverySettingsRows.specs());
         return all;
     }
 
@@ -43,7 +45,8 @@ public final class Matrix {
      * Each flag's old behaviour (OFF) is covered by its module's own IT.
      */
     public static final List<com.leads.flags.FeatureFlag> FLAGS_ON = List.of(com.leads.flags.FeatureFlag.LEAD_SETTINGS_COMPANY_WIDE_WRITES,
-            com.leads.flags.FeatureFlag.PRODUCTS_COMPANY_WIDE_WRITES);
+            com.leads.flags.FeatureFlag.PRODUCTS_COMPANY_WIDE_WRITES,
+            com.leads.flags.FeatureFlag.DELIVERY_SETTINGS_COMPANY_WIDE_WRITES);
 
     public static void flagsOn(com.leads.flags.FeatureFlags flags, com.leads.it.fixture.TenantFixture f) {
         for (var flag : FLAGS_ON) for (char o : new char[]{'A', 'B', 'S', 'P'}) flags.setOverride(flag, f.org(o), true, "it-test", "isolation matrix");
