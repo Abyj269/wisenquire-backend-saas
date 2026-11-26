@@ -103,7 +103,12 @@ public class WhatsAppCloudService {
                 var val = change.getValue();
                 if (val == null || val.getMetadata() == null) continue;
                 String number = val.getMetadata().getPhoneNumberId();
-                var config = configRepo.findByPhoneNumberId(number).filter(c -> Boolean.TRUE.equals(c.getIsActive())).orElseThrow(() -> new IllegalArgumentException("Unknown or inactive receiving number."));
+                // Module 12 P1: an unknown or inactive receiving number skips THIS change only (was: the whole batch failed).
+                var config = configRepo.findByPhoneNumberId(number).filter(c -> Boolean.TRUE.equals(c.getIsActive())).orElse(null);
+                if (config == null) {
+                    log.warn("Webhook change for unknown or inactive receiving number {} skipped", number);
+                    continue;
+                }
                 Long companyId = config.getCompany().getId();
                 TenantAccess.inCompany(companyId, () -> {
                     if (val.getMessages()!=null) for (var msg:val.getMessages()) {
@@ -990,10 +995,19 @@ public class WhatsAppCloudService {
     }
 
     private Specification<WhatsAppConversation> buildConversationSpecification(Long companyId, String phoneNumberId, String filter, String search, Long currentUserId) {
+        // D14 (module 12 P1): OWN users list what record(WhatsAppConversation) lets them open.
+        final Long ownMe = access.ownerFilter();
+        final boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             List<Long> branchIds = access.branchIds();
             if (branchIds != null) predicates.add(root.get("branch").get("id").in(branchIds));
+            if (ownMe != null) {
+                var agent = root.join("assignedAgent", jakarta.persistence.criteria.JoinType.LEFT);
+                var leadOwner = root.join("lead", jakarta.persistence.criteria.JoinType.LEFT).join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+                Predicate mine = cb.or(cb.equal(agent.get("id"), ownMe), cb.equal(leadOwner.get("id"), ownMe));
+                predicates.add(ownUnassigned ? cb.or(mine, cb.and(cb.isNull(agent.get("id")), cb.isNull(leadOwner.get("id")))) : mine);
+            }
             predicates.add(cb.equal(root.get("company").get("id"), companyId));
 
             // Blocked customers drop out of the inbox entirely (CRM chat
@@ -1022,8 +1036,11 @@ public class WhatsAppCloudService {
                 predicates.add(cb.isFalse(leadJoin.get("isConverted")));
                 predicates.add(leadJoin.get("status").get("stageType").in(StageType.CONVERTED, StageType.LOST, StageType.CLOSED).not());
             } else if ("ASSIGNED_TO_ME".equalsIgnoreCase(filter)) {
-                Join<WhatsAppConversation, Lead> leadJoin = root.join("lead", jakarta.persistence.criteria.JoinType.INNER);
-                predicates.add(cb.equal(leadJoin.get("assignedTo").get("id"), currentUserId));
+                // Module 12 P1: the chat's agent is me OR its lead is mine (was: the lead's assignee only), so
+                // the filter matches the OWN rule and a manager who is a chat's agent sees it here too.
+                var meAgent = root.join("assignedAgent", jakarta.persistence.criteria.JoinType.LEFT);
+                var meLeadOwner = root.join("lead", jakarta.persistence.criteria.JoinType.LEFT).join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+                predicates.add(cb.or(cb.equal(meAgent.get("id"), currentUserId), cb.equal(meLeadOwner.get("id"), currentUserId)));
             }
 
             if (search != null) {
@@ -1088,9 +1105,14 @@ public class WhatsAppCloudService {
             throw new IllegalArgumentException("Enter a valid phone number, including country code.");
         }
 
-        WhatsAppConversation conversation = conversationRepo
-                .findByCompanyIdAndCustomerWaIdAndReceivingPhoneNumberId(config.getCompany().getId(), customerWaId, config.getPhoneNumberId())
+        // D14 (module 12 P1): an existing conversation must pass the OWN check (it was returned to anyone
+        // who knew the phone number); a new one started by an OWN user is theirs.
+        var existing = conversationRepo.findByCompanyIdAndCustomerWaIdAndReceivingPhoneNumberId(config.getCompany().getId(), customerWaId, config.getPhoneNumberId());
+        if (existing.isPresent()) access.record(WhatsAppConversation.class, existing.get().getId());
+        final User ownStarter = access.ownerFilter() != null ? access.actor() : null;
+        WhatsAppConversation conversation = existing
                 .orElseGet(() -> conversationRepo.save(WhatsAppConversation.builder()
+                        .assignedAgent(ownStarter)
                         .company(config.getCompany())
                         .branch(config.getBranch())
                         .receivingPhoneNumberId(config.getPhoneNumberId())
@@ -1111,6 +1133,7 @@ public class WhatsAppCloudService {
         return conversationRepo.findByCompanyIdOrderByLastMessageAtDesc(companyId).stream()
                 .filter(c -> c.getBranch() != null && access.canBranch(c.getBranch()))
                 .filter(c -> PhoneNumberUtil.lastSignificantDigits(c.getCustomerWaId()).equals(normalized))
+                .filter(access::canSeeConversation) // D14 (module 12 P1)
                 .findFirst()
                 .map(this::mapConversationToDto)
                 .orElse(null);
@@ -1169,6 +1192,33 @@ public class WhatsAppCloudService {
 
         broadcast("/topic/whatsapp/company/" + conversation.getCompany().getId(), convDto);
         broadcast("/topic/whatsapp/conversation/" + conversation.getId(), msgDto);
+        pushToUsers(pushRecipients(conversation), convDto);
+    }
+
+    /** Module 12 P1: the per-user queue OWN users subscribe to instead of the company/branch topics. */
+    public static final String USER_QUEUE = "/queue/whatsapp";
+
+    /**
+     * Module 12 P1 (D14 OWN-PUSH): who gets a conversation update on their own queue: the chat's agent and
+     * the linked lead's assignee (STOMP principal = email until module 02 makes it the user id).
+     */
+    static java.util.Set<String> pushRecipients(WhatsAppConversation c) {
+        java.util.Set<String> to = new java.util.LinkedHashSet<>();
+        if (c == null) return to;
+        if (c.getAssignedAgent() != null && c.getAssignedAgent().getEmail() != null) to.add(c.getAssignedAgent().getEmail());
+        if (c.getLead() != null && c.getLead().getAssignedTo() != null && c.getLead().getAssignedTo().getEmail() != null) to.add(c.getLead().getAssignedTo().getEmail());
+        return to;
+    }
+
+    /** After commit (like broadcast), so a rolled-back change is never pushed. */
+    void pushToUsers(java.util.Set<String> users, Object payload) {
+        if (users.isEmpty()) return;
+        Runnable publish = () -> users.forEach(u -> messagingTemplate.convertAndSendToUser(u, USER_QUEUE, payload));
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override public void afterCommit() { publish.run(); }
+            });
+        } else publish.run();
     }
 
     private void broadcast(String topic, Object payload) {

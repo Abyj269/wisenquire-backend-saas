@@ -62,9 +62,11 @@ public class WhatsAppReceiptService {
                 message.setErrorMessage(next == MessageStatus.FAILED ? (String) row.get("error_detail") : null);
                 messages.save(message);
                 var dto = cloud.getObject().mapMessageToDto(message);
+                var users = WhatsAppCloudService.pushRecipients(message.getConversation()); // module 12 P1: OWN users' queues
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override public void afterCommit() {
                         messaging.convertAndSend("/topic/whatsapp/conversation/" + dto.getConversationId(), dto);
+                        users.forEach(u -> messaging.convertAndSendToUser(u, WhatsAppCloudService.USER_QUEUE, dto));
                     }
                 });
             }

@@ -16,15 +16,22 @@ import java.util.HexFormat;
 public class WebhookSignatureVerifier {
     private final WhatsAppConfigurationRepository configs;
     private final ObjectMapper mapper;
-    public void verify(byte[] body, String signature) {
+    /**
+     * Verifies the HMAC against the receiving numbers' own app secrets and returns the parsed payload
+     * (module 12 P1: parsed once, reused by the controller). A change for an unknown number is skipped;
+     * at least one change must belong to a known number whose secret matches the whole body.
+     */
+    public com.fasterxml.jackson.databind.JsonNode verify(byte[] body, String signature) {
         if(body.length>1048576 || signature==null || !signature.matches("sha256=[0-9a-fA-F]{64}")) throw denied();
         try {
             boolean found=false;
-            for(var entry:mapper.readTree(body).path("entry")) for(var change:entry.path("changes")) {
+            var tree=mapper.readTree(body);
+            for(var entry:tree.path("entry")) for(var change:entry.path("changes")) {
                 String number=change.path("value").path("metadata").path("phone_number_id").asText();
                 var candidates = number.isBlank() && WhatsAppTemplateEventService.FIELDS.contains(change.path("field").asText())
                     ? configs.findByWabaIdAndIsActiveTrue(entry.path("id").asText())
-                    : java.util.List.of(configs.findByPhoneNumberId(number).orElseThrow(WebhookSignatureVerifier::denied));
+                    : configs.findByPhoneNumberId(number).map(java.util.List::of).orElse(java.util.List.of());
+                if (candidates.isEmpty()) continue; // unknown number: skipped here and in processWebhookPayload
                 boolean matched = false;
                 for (var config : candidates) {
                 if(!Boolean.TRUE.equals(config.getIsActive()) || config.getAppSecret()==null || config.getAppSecret().isBlank()) continue;
@@ -36,6 +43,7 @@ public class WebhookSignatureVerifier {
                 found=true;
             }
             if(!found) throw denied();
+            return tree;
         } catch(AccessDeniedException e){throw e;} catch(Exception e){throw denied();}
     }
     private static AccessDeniedException denied(){return new AccessDeniedException("Invalid webhook signature or receiving number.");}

@@ -90,7 +90,8 @@ class OwnScopePrimitiveIT extends AbstractIntegrationTest {
         assertEquals(403, status(Persona.AGENT_OWN_2, "/customers/{id}", customer));
         Long otherLead = fixture.freshLeadAssignedTo(Slot.A1a, a2);
         fixture.freshConversationFor(Slot.A1a, a1, otherLead); // a1 is the agent on a chat about this customer
-        // Module 07 P1: the chat half is behind own_scope.customer_via_chats (default OFF until module 12).
+        // Module 07/12: the chat half is behind own_scope.customer_via_chats (default ON since V75); OFF first, then ON.
+        flags.setOverride(FeatureFlag.OWN_SCOPE_CUSTOMER_VIA_CHATS, fixture.org('A'), false, "it", "OwnScopePrimitiveIT");
         assertEquals(403, status(Persona.AGENT_OWN_1, "/customers/{id}", fixture.customerOfLead(otherLead)), "chat half OFF");
         flags.setOverride(FeatureFlag.OWN_SCOPE_CUSTOMER_VIA_CHATS, fixture.org('A'), true, "it", "OwnScopePrimitiveIT");
         try {

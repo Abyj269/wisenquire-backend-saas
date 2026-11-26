@@ -190,6 +190,16 @@ public class TenantFixture {
         return inTx(() -> persist(DeliveryFailureReason.builder().company(companyRef(s)).reasonText("IT reason " + seq.incrementAndGet()).build()).getId());
     }
 
+    /** Module 12: gives the slot's WhatsApp connection an app secret, so a test can sign a webhook with it. */
+    public void setAppSecret(Slot s, String secret) {
+        inTx(() -> { em.find(WhatsAppConfiguration.class, configId.get(s)).setAppSecret(secret); return null; });
+    }
+
+    /** Module 12: the customer phone (wa_id) of a conversation. */
+    public String waIdOf(Long conversationId) {
+        return inTx(() -> em.find(WhatsAppConversation.class, conversationId).getCustomerWaId());
+    }
+
     /** Module 11: a fresh WhatsApp connection on branch {@code s} (no conversations use it, so it can be deleted). */
     public Long freshWhatsAppConfig(Slot s) {
         return inTx(() -> { int n = seq.incrementAndGet(); return persist(WhatsAppConfiguration.builder()

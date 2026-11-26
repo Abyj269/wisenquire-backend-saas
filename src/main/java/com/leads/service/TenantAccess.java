@@ -186,6 +186,16 @@ public class TenantAccess {
         return me == null ? null : me.getId();
     }
 
+    /**
+     * Module 12 P1: whether the caller may see this conversation under D14 (always true without an active
+     * OWN scope). Same rule as record(WhatsAppConversation), for in-memory filters such as find-by-phone.
+     */
+    public boolean canSeeConversation(WhatsAppConversation c) {
+        User me = ownUser();
+        if (me == null) return true;
+        return ownsConversation(c, me, flags.isOn(com.leads.flags.FeatureFlag.OWN_SCOPE_INCLUDE_UNASSIGNED, me.getOrganization().getId()));
+    }
+
     /** With an active OWN scope: whether a customer is also visible through a chat assigned to me (flag own_scope.customer_via_chats, module 07). */
     public boolean ownCustomerViaChats() {
         User me = ownUser();

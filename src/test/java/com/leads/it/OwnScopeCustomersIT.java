@@ -128,12 +128,14 @@ class OwnScopeCustomersIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void theChatHalfWaitsForItsFlag() throws Exception {
+    void theChatHalfFollowsItsFlag() throws Exception {
         on(FeatureFlag.OWN_SCOPE_ENFORCED);
         Long lead = fixture.freshLeadAssignedTo(Slot.A1a, a2);
         Long customer = fixture.customerOfLead(lead);
         fixture.freshConversationFor(Slot.A1a, a1, lead); // a chat assigned to agent 1 on agent 2's lead
 
+        // Default ON since V75 (module 12 P1 done); switched OFF for this org first to prove the switch.
+        flags.setOverride(FeatureFlag.OWN_SCOPE_CUSTOMER_VIA_CHATS, fixture.org('A'), false, "it", "OwnScopeCustomersIT");
         assertFalse(customers(Persona.AGENT_OWN_1, Slot.A1a).contains(customer), "flag OFF: not through a chat");
         assertEquals(403, call(Persona.AGENT_OWN_1, get("/customers/{id}", customer)).getStatus(), "record and list agree");
 

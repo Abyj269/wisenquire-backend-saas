@@ -52,9 +52,9 @@ public class WhatsAppController {
     @PostMapping("/webhook")
     @Operation(summary = "Meta Webhook Event Receiver", description = "Receives real-time incoming WhatsApp messages and delivery receipts from Meta Cloud.")
     public ResponseEntity<String> receiveWebhook(@RequestBody byte[] raw, @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature) throws IOException {
-        signatures.verify(raw, signature);
-        templateEvents.recordVerified(mapper.readTree(raw));
-        whatsAppService.processWebhookPayload(mapper.readValue(raw, WhatsAppWebhookPayload.class));
+        var tree = signatures.verify(raw, signature); // module 12 P1: parsed once
+        templateEvents.recordVerified(tree);
+        whatsAppService.processWebhookPayload(mapper.treeToValue(tree, WhatsAppWebhookPayload.class));
         return ResponseEntity.ok("EVENT_RECEIVED");
     }
 

@@ -68,8 +68,12 @@ public class StompSecurityInterceptor implements ChannelInterceptor {
                 boolean canRead=auth.getAuthorities().stream().anyMatch(a->java.util.Set.of("ROLE_SUPER_ADMIN","WHATSAPP_LIVE_CHAT:VIEW","LEADS:VIEW","CUSTOMERS:VIEW").contains(a.getAuthority()));
                 if(!canRead) throw denied();
                 String destination=h.getDestination();
+                // Module 12 P1: the caller's own queue (Spring routes /user/... to this session's principal only).
+                if("/user/queue/whatsapp".equals(destination)) return message;
                 if(destination==null || !destination.matches("/topic/whatsapp/(company|branch|conversation)/[0-9]+")) throw denied();
                 String[] parts=destination.split("/");long id=Long.parseLong(parts[4]);
+                // D14 OWN-PUSH (module 12 P1): company/branch topics carry every chat; OWN users use their queue.
+                if(!"conversation".equals(parts[3]) && access.ownerFilter()!=null) throw denied();
                 switch(parts[3]) {
                     case "company" -> access.companyWide(id);
                     case "branch" -> access.branch(id);
