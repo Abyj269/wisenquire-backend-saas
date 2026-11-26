@@ -127,7 +127,8 @@ public class WhatsAppCloudService {
                         // Ancillary failure cannot roll back an already committed inbound message.
                         try { tx.executeWithoutResult(status -> messageRepo.findByWamid(msg.getId()).ifPresent(saved -> maybeAutoCreateLead(saved.getConversation().getCompany(),saved.getConversation()))); }
                         catch (RuntimeException ex) { log.warn("Auto-lead processing failed for inbound {}",msg.getId()); }
-                        try { tx.executeWithoutResult(status -> messageRepo.findByWamid(msg.getId()).ifPresent(saved -> maybeSendAutoReply(saved.getConversation().getCompany(),saved.getConversation(),configRepo.findByPhoneNumberId(number).orElseThrow()))); }
+                        // S3-d: the auto-reply manages its own short transactions; no transaction is open during its Graph call.
+                        try { messageRepo.findByWamid(msg.getId()).map(saved -> saved.getConversation().getId()).ifPresent(cid -> maybeSendAutoReply(cid, number)); }
                         catch (RuntimeException ex) { log.warn("Auto-reply processing failed for inbound {}",msg.getId()); }
                         // Hand off after the inbound transaction has committed, by id -
                         // the engine runs on its own thread and reloads everything.
@@ -340,124 +341,96 @@ public class WhatsAppCloudService {
     }
 
     /**
-     * Sends the working-hours/non-working-hours/holiday auto-reply for this
-     * branch, if {@link WhatsAppScheduleService#resolveAutoReply} finds one
-     * configured and enabled — at most once per conversation per
-     * (company-local) calendar day.
-     * <p>
-     * Best-effort by design, same non-blocking spirit as
-     * {@link #maybeAutoCreateLead}: any failure here is logged and
-     * swallowed rather than propagated, since it must never roll back the
-     * inbound message it's attached after.
+     * The branch auto-reply after an inbound message. S3-d: decided in a short read, then reserved, sent
+     * with no transaction open, and recorded; any failure is logged and leaves no history row (as before).
+     * Called OUTSIDE the webhook's per-message transaction.
      */
-    private void maybeSendAutoReply(Company company, WhatsAppConversation conversation, WhatsAppConfiguration config) {
-        if (config == null || conversation.getBranch() == null) return;
-        if (!Boolean.TRUE.equals(config.getIsActive()) || !WhatsAppMessagingPolicy.isOpen(conversation.getLastCustomerMessageEpoch(), java.time.Instant.now())) return;
-
+    private void maybeSendAutoReply(Long conversationId, String receivingNumber) {
+        record Plan(WhatsAppConfiguration config, String waId, WhatsAppScheduleService.ResolvedAutoReply reply, LocalDateTime companyNow) { }
+        Long reservedId = null;
         try {
-            LocalDateTime companyNow = scheduleService.nowInCompanyZone(company);
-            if (conversation.getLastAutoReplyAt() != null
-                    && conversation.getLastAutoReplyAt().toLocalDate().isEqual(companyNow.toLocalDate())) {
-                return; // already replied today
-            }
-
-            Optional<WhatsAppScheduleService.ResolvedAutoReply> resolved = scheduleService.resolveAutoReply(conversation.getBranch());
-            if (resolved.isEmpty()) return;
-            WhatsAppScheduleService.ResolvedAutoReply reply = resolved.get();
-            if (reply.text() == null || reply.text().isBlank()) return;
-
-            String wamid;
-            String replyMediaId = null;
-            String replyType = "TEXT";
-            String mediaMimeType = reply.mediaMimeType();
-            if (reply.mediaData() != null && !reply.mediaData().isBlank()) {
-                byte[] bytes = decodeDataUri(reply.mediaData());
-                String mediaType = mediaMimeType != null && mediaMimeType.startsWith("video/") ? "video" : "image";
-                String metaMediaId = graphApiClient.uploadMedia(config, bytes, mediaMimeType, "auto-reply");
-                replyMediaId = metaMediaId; replyType = mediaType.toUpperCase();
-                wamid = graphApiClient.sendMediaMessage(config, conversation.getCustomerWaId(), mediaType, metaMediaId, reply.text(), null);
-            } else {
-                wamid = graphApiClient.sendTextMessage(config, conversation.getCustomerWaId(), reply.text());
-            }
-
-            WhatsAppMessage autoReplyMsg = WhatsAppMessage.builder()
-                    .conversation(conversation)
-                    .wamid(wamid)
-                    .direction(MessageDirection.OUTBOUND)
-                    .messageType(replyType)
-                    .mediaId(replyMediaId)
-                    .mediaMimeType(mediaMimeType)
-                    .isAutoReply(true)
-                    .bodyText(reply.text())
-                    .status(MessageStatus.ACCEPTED)
-                    .build();
-            WhatsAppMessage savedAutoReply = messageRepo.save(autoReplyMsg);
-
-            conversation.setLastAutoReplyAt(companyNow);
-            conversation.setLastMessageText(reply.text());
-            conversation.setLastMessageAt(LocalDateTime.now());
-            conversationRepo.save(conversation);
-
-            broadcastConversationUpdate(conversation, savedAutoReply);
+            var readOnly = tx();
+            readOnly.setReadOnly(true);
+            Plan plan = readOnly.execute(st -> {
+                WhatsAppConversation conversation = conversationRepo.findById(conversationId).orElse(null);
+                WhatsAppConfiguration config = configRepo.findByPhoneNumberId(receivingNumber).orElse(null);
+                if (conversation == null || config == null || conversation.getBranch() == null) return null;
+                if (!Boolean.TRUE.equals(config.getIsActive()) || !WhatsAppMessagingPolicy.isOpen(conversation.getLastCustomerMessageEpoch(), java.time.Instant.now())) return null;
+                LocalDateTime companyNow = scheduleService.nowInCompanyZone(conversation.getCompany());
+                if (conversation.getLastAutoReplyAt() != null && conversation.getLastAutoReplyAt().toLocalDate().isEqual(companyNow.toLocalDate())) return null; // already replied today
+                var resolved = scheduleService.resolveAutoReply(conversation.getBranch());
+                if (resolved.isEmpty() || resolved.get().text() == null || resolved.get().text().isBlank()) return null;
+                return new Plan(config, conversation.getCustomerWaId(), resolved.get(), companyNow);
+            });
+            if (plan == null) return;
+            var reply = plan.reply();
+            boolean withMedia = reply.mediaData() != null && !reply.mediaData().isBlank();
+            String mediaType = withMedia && reply.mediaMimeType() != null && reply.mediaMimeType().startsWith("video/") ? "video" : "image";
+            Reserved reserved = reserve(conversationId, null, conversation -> WhatsAppMessage.builder()
+                    .messageType(withMedia ? mediaType.toUpperCase() : "TEXT").mediaMimeType(reply.mediaMimeType())
+                    .isAutoReply(true).bodyText(reply.text()));
+            reservedId = reserved.messageId();
+            Sent sent = attempt(() -> {
+                if (withMedia) {
+                    String metaMediaId = graphApiClient.uploadMedia(plan.config(), decodeDataUri(reply.mediaData()), reply.mediaMimeType(), "auto-reply");
+                    return new String[]{graphApiClient.sendMediaMessage(plan.config(), plan.waId(), mediaType, metaMediaId, reply.text(), null), metaMediaId};
+                }
+                return new String[]{graphApiClient.sendTextMessage(plan.config(), plan.waId(), reply.text())};
+            });
+            if (sent.status() != MessageStatus.ACCEPTED) throw new WhatsAppApiException(sent.error());
+            complete(reservedId, sent, conversation -> {
+                conversation.setLastAutoReplyAt(plan.companyNow());
+                conversation.setLastMessageText(reply.text());
+            });
         } catch (Exception ex) {
-            log.warn("Auto-reply skipped for conversation {}: {}", conversation.getId(), ex.getMessage());
+            if (reservedId != null) {
+                try { discard(reservedId); } catch (RuntimeException ignored) { /* best effort */ }
+            }
+            log.warn("Auto-reply skipped for conversation {}: {}", conversationId, ex.getMessage());
         }
     }
 
     /**
-     * Sends a plain-text message on behalf of an automation (no acting user):
-     * same 24-hour-window rule as an agent's reply, recorded in the chat
-     * history as an automatic message, and broadcast to open inboxes.
-     * Throws with a readable reason when it can't be sent; the engine records
-     * that reason on the execution step.
+     * Sends a plain-text message on behalf of an automation (no acting user): same 24-hour-window rule as
+     * an agent's reply, recorded as an automatic message and broadcast. Throws with a readable reason when
+     * it can't be sent (no history row then), as before. S3-d: no transaction during the Graph call.
      */
-    @Transactional
     public void sendAutomationText(Long conversationId, String text) {
-        WhatsAppConversation conversation = conversationRepo.findForSending(conversationId)
-                .orElseThrow(() -> new IllegalStateException("Conversation no longer exists."));
-        entityManager.refresh(conversation, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
-        if (!WhatsAppMessagingPolicy.isOpen(conversation.getLastCustomerMessageEpoch(), java.time.Instant.now())) {
-            throw new IllegalStateException("The customer's 24-hour reply window is closed.");
-        }
-        WhatsAppConfiguration config = conversation.getReceivingPhoneNumberId() != null
-                ? configRepo.findByPhoneNumberId(conversation.getReceivingPhoneNumberId()).orElse(null) : null;
-        if (config == null || !Boolean.TRUE.equals(config.getIsActive())) {
-            throw new IllegalStateException("This conversation's WhatsApp number isn't connected.");
-        }
-
-        String wamid = graphApiClient.sendTextMessage(config, conversation.getCustomerWaId(), text);
-
-        WhatsAppMessage saved = messageRepo.save(WhatsAppMessage.builder()
-                .conversation(conversation)
-                .wamid(wamid)
-                .direction(MessageDirection.OUTBOUND)
-                .messageType("TEXT")
-                .isAutoReply(true)
-                .bodyText(text)
-                .status(MessageStatus.ACCEPTED)
-                .build());
-        conversation.setLastMessageText(text);
-        conversation.setLastMessageAt(LocalDateTime.now());
-        conversationRepo.save(conversation);
-        broadcastConversationUpdate(conversation, saved);
+        SendTarget target = automationTarget(conversationId);
+        Reserved reserved = reserve(conversationId, null, conversation -> WhatsAppMessage.builder()
+                .messageType("TEXT").isAutoReply(true).bodyText(text));
+        Sent sent = attempt(() -> new String[]{graphApiClient.sendTextMessage(target.config(), target.customerWaId(), text)});
+        finishAutomation(reserved.messageId(), sent, text);
     }
 
-    @Transactional
-    public void sendAutomationInteractive(Long conversationId, String text, String interactiveType, com.fasterxml.jackson.databind.JsonNode action) {
-        WhatsAppConversation conversation = conversationRepo.findForSending(conversationId)
-                .orElseThrow(() -> new IllegalStateException("Conversation no longer exists."));
-        entityManager.refresh(conversation, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
-        if (!WhatsAppMessagingPolicy.isOpen(conversation.getLastCustomerMessageEpoch(), java.time.Instant.now())) {
-            throw new IllegalStateException("The customer's 24-hour reply window is closed.");
+    /** Window open and number connected, read in a short transaction (IllegalStateException otherwise, as before). */
+    private SendTarget automationTarget(Long conversationId) {
+        SendTarget target;
+        try {
+            target = readTarget(conversationId, false, conversation -> {
+                if (!WhatsAppMessagingPolicy.isOpen(conversation.getLastCustomerMessageEpoch(), java.time.Instant.now())) {
+                    throw new IllegalStateException("The customer's 24-hour reply window is closed.");
+                }
+            });
+        } catch (IllegalArgumentException notFound) {
+            throw new IllegalStateException("Conversation no longer exists.");
         }
-        WhatsAppConfiguration config = conversation.getReceivingPhoneNumberId() != null
-                ? configRepo.findByPhoneNumberId(conversation.getReceivingPhoneNumberId()).orElse(null) : null;
-        if (config == null || !Boolean.TRUE.equals(config.getIsActive())) {
-            throw new IllegalStateException("This conversation's WhatsApp number isn't connected.");
-        }
+        if (target.config() == null) throw new IllegalStateException("This conversation's WhatsApp number isn't connected.");
+        return target;
+    }
 
-        String wamid;
+    private void finishAutomation(Long messageId, Sent sent, String text) {
+        if (sent.status() != MessageStatus.ACCEPTED) {
+            discard(messageId);
+            throw new WhatsAppApiException(sent.error() != null ? sent.error() : "WhatsApp did not accept the message.");
+        }
+        complete(messageId, sent, conversation -> conversation.setLastMessageText(text));
+    }
+
+    public void sendAutomationInteractive(Long conversationId, String text, String interactiveType, com.fasterxml.jackson.databind.JsonNode action) {
+        SendTarget target = automationTarget(conversationId);
         String msgType;
+        java.util.concurrent.Callable<String[]> call;
         if ("QUICK_REPLY".equalsIgnoreCase(interactiveType)) {
             msgType = "BUTTON";
             List<Map<String, String>> buttons = new ArrayList<>();
@@ -471,7 +444,7 @@ public class WhatsAppCloudService {
                 }
             }
             if (buttons.isEmpty()) throw new IllegalStateException("Quick Reply requires at least 1 button.");
-            wamid = graphApiClient.sendInteractiveButtons(config, conversation.getCustomerWaId(), text, buttons);
+            call = () -> new String[]{graphApiClient.sendInteractiveButtons(target.config(), target.customerWaId(), text, buttons)};
         } else if ("LIST".equalsIgnoreCase(interactiveType) || "LIST_MESSAGE".equalsIgnoreCase(interactiveType)) {
             msgType = "INTERACTIVE";
             String btnText = action.path("listButtonText").asText("View Options");
@@ -490,24 +463,13 @@ public class WhatsAppCloudService {
                 }
             }
             if (rows.isEmpty()) throw new IllegalStateException("Interactive List requires at least 1 row option.");
-            wamid = graphApiClient.sendInteractiveList(config, conversation.getCustomerWaId(), text, btnText, sectionTitle, rows);
+            call = () -> new String[]{graphApiClient.sendInteractiveList(target.config(), target.customerWaId(), text, btnText, sectionTitle, rows)};
         } else {
             throw new IllegalArgumentException("Unknown interactive type: " + interactiveType);
         }
-
-        WhatsAppMessage saved = messageRepo.save(WhatsAppMessage.builder()
-                .conversation(conversation)
-                .wamid(wamid)
-                .direction(MessageDirection.OUTBOUND)
-                .messageType(msgType)
-                .isAutoReply(true)
-                .bodyText(text)
-                .status(MessageStatus.ACCEPTED)
-                .build());
-        conversation.setLastMessageText(text);
-        conversation.setLastMessageAt(LocalDateTime.now());
-        conversationRepo.save(conversation);
-        broadcastConversationUpdate(conversation, saved);
+        Reserved reserved = reserve(conversationId, null, conversation -> WhatsAppMessage.builder()
+                .messageType(msgType).isAutoReply(true).bodyText(text));
+        finishAutomation(reserved.messageId(), attempt(call), text);
     }
 
     /**
@@ -666,203 +628,222 @@ public class WhatsAppCloudService {
         }, () -> log.warn("Reaction '{}' targets unknown wamid '{}' — ignored.", reaction.getEmoji(), reaction.getMessageId()));
     }
 
-    @Transactional
-    public WhatsAppMessageDto sendMessage(SendMessageRequest req) {
-        access.record(com.leads.model.entity.WhatsAppConversation.class, req.getConversationId());
-        WhatsAppConversation conversation = conversationRepo.findForSending(req.getConversationId())
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + req.getConversationId()));
-        entityManager.refresh(conversation, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
 
-        validateClientId(req.getClientMessageId());
-        if (req.getClientMessageId() != null) {
-            var existing = messageRepo.findByConversationIdAndClientMessageId(conversation.getId(), req.getClientMessageId());
-            if (existing.isPresent()) return mapMessageToDto(existing.get());
+    // ==== S3-d (module 12 P1 part 2, CLAUDE.md hard rule 2) ===========================================
+    // A send is: (1) a short transaction that checks the conversation and reserves a PENDING message
+    // (the unique (conversation_id, client_message_id) key still stops double sends); (2) the Graph
+    // calls with NO transaction or row lock open; (3) a short transaction that records the result and
+    // updates the conversation. Receipts that arrive before (3) are applied by the reconciler later.
+
+    /** Where a send goes, read in a short transaction: the config (null = not connected) and the customer. */
+    private record SendTarget(WhatsAppConfiguration config, String customerWaId, WhatsAppMessageDto existing) { }
+
+    /** The reserved PENDING message, or the earlier message for a repeated clientMessageId. */
+    private record Reserved(Long messageId, WhatsAppMessageDto existing) { }
+
+    /** What Graph answered. */
+    private record Sent(String wamid, MessageStatus status, String error, String mediaId) {
+        static Sent notConnected() {
+            return new Sent("wamid.local." + java.util.UUID.randomUUID(), MessageStatus.FAILED,
+                    "This conversation's WhatsApp number isn't connected — set it up under WhatsApp Setup.", null);
         }
+    }
 
-        User currentUser = authService.getCurrentUser();
+    private org.springframework.transaction.support.TransactionTemplate tx() {
+        return new org.springframework.transaction.support.TransactionTemplate(transactions);
+    }
+
+    private WhatsAppConversation lockedConversation(Long conversationId) {
+        WhatsAppConversation conversation = conversationRepo.findForSending(conversationId)
+                .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + conversationId));
+        entityManager.refresh(conversation, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE); // held only inside this short transaction
+        return conversation;
+    }
+
+    private WhatsAppConfiguration activeConfigOf(WhatsAppConversation conversation) {
+        WhatsAppConfiguration config = conversation.getReceivingPhoneNumberId() != null
+                ? configRepo.findByPhoneNumberId(conversation.getReceivingPhoneNumberId()).orElse(null) : null;
+        return config != null && Boolean.TRUE.equals(config.getIsActive()) ? config : null;
+    }
+
+    /** Step 1: checks inside a short transaction, then saves a PENDING message (or returns the earlier one). */
+    private Reserved reserve(Long conversationId, String clientMessageId,
+                             java.util.function.Function<WhatsAppConversation, WhatsAppMessage.WhatsAppMessageBuilder> draft) {
+        return tx().execute(st -> {
+            WhatsAppConversation conversation = lockedConversation(conversationId);
+            if (clientMessageId != null) {
+                var existing = messageRepo.findByConversationIdAndClientMessageId(conversationId, clientMessageId);
+                if (existing.isPresent()) return new Reserved(null, mapMessageToDto(existing.get()));
+            }
+            WhatsAppMessage pending = draft.apply(conversation)
+                    .conversation(conversation)
+                    .direction(MessageDirection.OUTBOUND)
+                    .wamid("wamid.pending." + java.util.UUID.randomUUID())
+                    .status(MessageStatus.PENDING)
+                    .build();
+            return new Reserved(messageRepo.save(pending).getId(), null);
+        });
+    }
+
+    /** Step 2: the Graph call, with no transaction open; Meta failures become FAILED/UNKNOWN as before. */
+    private Sent attempt(java.util.concurrent.Callable<String[]> graphCall) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("A WhatsApp send was started inside a transaction (CLAUDE.md hard rule 2).");
+        }
+        try {
+            String[] r = graphCall.call(); // [wamid, mediaId]
+            return new Sent(r[0], MessageStatus.ACCEPTED, null, r.length > 1 ? r[1] : null);
+        } catch (WhatsAppApiException ex) {
+            String error = ex.getMessage() != null && ex.getMessage().length() > 255 ? ex.getMessage().substring(0, 255) : ex.getMessage();
+            return new Sent("wamid.failed." + java.util.UUID.randomUUID(),
+                    ex.getCause() instanceof org.springframework.web.client.ResourceAccessException ? MessageStatus.UNKNOWN : MessageStatus.FAILED, error, null);
+        } catch (RuntimeException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    /** Step 3: records the result, updates the conversation and broadcasts after commit. */
+    private WhatsAppMessageDto complete(Long messageId, Sent sent, java.util.function.Consumer<WhatsAppConversation> conversationUpdate) {
+        return tx().execute(st -> {
+            WhatsAppMessage message = messageRepo.findById(messageId).orElseThrow();
+            WhatsAppConversation conversation = lockedConversation(message.getConversation().getId());
+            message.setWamid(sent.wamid());
+            message.setStatus(sent.status());
+            message.setErrorMessage(sent.error());
+            if (sent.mediaId() != null) message.setMediaId(sent.mediaId());
+            WhatsAppMessage saved = messageRepo.save(message);
+            conversationUpdate.accept(conversation);
+            conversation.setLastMessageAt(LocalDateTime.now());
+            conversationRepo.save(conversation);
+            WhatsAppMessageDto dto = mapMessageToDto(saved);
+            dto.setClientMessageId(saved.getClientMessageId());
+            broadcastConversationUpdate(conversation, saved);
+            return dto;
+        });
+    }
+
+    /** Automation/auto-reply failures leave no history row (as before): the reservation is removed. */
+    private void discard(Long messageId) {
+        tx().executeWithoutResult(st -> messageRepo.deleteById(messageId));
+    }
+
+    private SendTarget readTarget(Long conversationId, boolean checkAccess, java.util.function.Consumer<WhatsAppConversation> checks) {
+        return readTarget(conversationId, checkAccess, null, checks);
+    }
+
+    /** A repeated clientMessageId returns the stored message before any other check (as before S3-d). */
+    private SendTarget readTarget(Long conversationId, boolean checkAccess, String clientMessageId, java.util.function.Consumer<WhatsAppConversation> checks) {
+        // A normal (not read-only) short transaction: the clientMessageId lookup takes a row lock (FOR UPDATE).
+        return tx().execute(st -> {
+            if (checkAccess) access.record(WhatsAppConversation.class, conversationId);
+            WhatsAppConversation conversation = conversationRepo.findById(conversationId)
+                    .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + conversationId));
+            if (clientMessageId != null) {
+                var existing = messageRepo.findByConversationIdAndClientMessageId(conversationId, clientMessageId);
+                if (existing.isPresent()) return new SendTarget(null, null, mapMessageToDto(existing.get()));
+            }
+            checks.accept(conversation);
+            return new SendTarget(activeConfigOf(conversation), conversation.getCustomerWaId(), null);
+        });
+    }
+
+    /** Agent reply or template send. S3-d: no transaction or lock is open during the Graph calls. */
+    public WhatsAppMessageDto sendMessage(SendMessageRequest req) {
         String messageType = req.getMessageType() != null ? req.getMessageType().toUpperCase() : "TEXT";
         if (!java.util.Set.of("TEXT", "TEMPLATE").contains(messageType)) throw new IllegalArgumentException("Use the media upload endpoint for attachments.");
-        if (!"TEMPLATE".equals(messageType)) WhatsAppMessagingPolicy.requireOpen(conversation);
+        validateClientId(req.getClientMessageId());
+        // Reply from the exact number the customer originally messaged (a branch can have several numbers).
+        SendTarget target = readTarget(req.getConversationId(), true, req.getClientMessageId(), conversation -> {
+            if (!"TEMPLATE".equals(messageType)) WhatsAppMessagingPolicy.requireOpen(conversation);
+        });
+        if (target.existing() != null) return target.existing();
 
-        // Reply from the exact number the customer originally messaged (a
-        // branch can now have several numbers, so "the branch's number" is no
-        // longer unambiguous — the conversation's own receivingPhoneNumberId
-        // is the only reliable way to pick the right one). If that number
-        // isn't configured (or Meta rejects the call — bad/expired token,
-        // etc.), the message is still recorded so the agent's reply isn't
-        // lost, but marked FAILED with the reason instead of silently
-        // pretending it was delivered.
-        WhatsAppConfiguration config = conversation.getReceivingPhoneNumberId() != null
-                ? configRepo.findByPhoneNumberId(conversation.getReceivingPhoneNumberId()).orElse(null)
-                : null;
-
+        // The live template is checked before anything is saved (a wrong template is a 400, not a FAILED message).
         com.fasterxml.jackson.databind.JsonNode liveTemplate = null;
-        if ("TEMPLATE".equals(messageType) && config != null && Boolean.TRUE.equals(config.getIsActive())) {
-            var live = graphApiClient.listTemplates(config).stream().filter(t ->
+        if ("TEMPLATE".equals(messageType) && target.config() != null) {
+            var live = graphApiClient.listTemplates(target.config()).stream().filter(t ->
                 java.util.Objects.equals(req.getTemplateName(), t.path("name").asText()) &&
                 java.util.Objects.equals(req.getTemplateLanguage() == null ? "en_US" : req.getTemplateLanguage(), t.path("language").asText()))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Template not found in this number's business account. Refresh templates."));
             WhatsAppTemplateSendPolicy.validate(live, req);
             liveTemplate = live;
         }
-        String wamid;
-        MessageStatus status;
-        String errorMessage = null;
-        if (config == null || !Boolean.TRUE.equals(config.getIsActive())) {
-            // UUID suffix, not just a millisecond timestamp — wamid now has a
-            // DB-level unique constraint (idx_msg_wamid), and two failed
-            // sends landing in the same millisecond would otherwise collide.
-            wamid = "wamid.local." + java.util.UUID.randomUUID();
-            status = MessageStatus.FAILED;
-            errorMessage = "This conversation's WhatsApp number isn't connected — set it up under WhatsApp Setup.";
-        } else {
-            try {
-                List<Map<String, Object>> templateComponents = null;
-                if (req.getTemplateBodyParams() != null && !req.getTemplateBodyParams().isEmpty()) {
-                    List<Map<String, Object>> parameters = new ArrayList<>();
-                    List<String> names = new ArrayList<>();
-                    if (liveTemplate != null && "NAMED".equals(liveTemplate.path("parameter_format").asText()))
-                        for (var c : liveTemplate.path("components")) if ("BODY".equals(c.path("type").asText())) names = WhatsAppTemplateValidation.variableNames(c.path("text").asText());
-                    for (int i = 0; i < req.getTemplateBodyParams().size(); i++) {
-                        Map<String, Object> parameter = new java.util.LinkedHashMap<>();
-                        parameter.put("type", "text"); parameter.put("text", req.getTemplateBodyParams().get(i));
-                        if (!names.isEmpty()) parameter.put("parameter_name", names.get(i));
-                        parameters.add(parameter);
-                    }
-                    templateComponents = List.of(Map.of(
-                            "type", "body",
-                            "parameters", parameters
-                    ));
-                }
-                wamid = "TEMPLATE".equals(messageType)
-                        ? graphApiClient.sendTemplateMessage(config, conversation.getCustomerWaId(), req.getTemplateName(),
-                                req.getTemplateLanguage() != null ? req.getTemplateLanguage() : "en_US", templateComponents)
-                        : graphApiClient.sendTextMessage(config, conversation.getCustomerWaId(), req.getMessage());
-                status = MessageStatus.ACCEPTED;
-            } catch (WhatsAppApiException ex) {
-                wamid = "wamid.failed." + java.util.UUID.randomUUID();
-                status = ex.getCause() instanceof org.springframework.web.client.ResourceAccessException ? MessageStatus.UNKNOWN : MessageStatus.FAILED;
-                errorMessage = ex.getMessage() != null && ex.getMessage().length() > 255
-                        ? ex.getMessage().substring(0, 255) : ex.getMessage();
-            }
-        }
+        final com.fasterxml.jackson.databind.JsonNode template = liveTemplate;
+        User currentUser = authService.getCurrentUser();
 
-        // Save Outbound Message
-        WhatsAppMessage message = WhatsAppMessage.builder()
-                .conversation(conversation)
-                .wamid(wamid)
-                .direction(MessageDirection.OUTBOUND)
+        Reserved reserved = reserve(req.getConversationId(), req.getClientMessageId(), conversation -> WhatsAppMessage.builder()
                 .messageType(messageType)
                 .templateName("TEMPLATE".equals(messageType) ? req.getTemplateName() : null)
-                .templateCategory(liveTemplate != null ? liveTemplate.path("category").asText(null) : null)
-                .templateLanguage(liveTemplate != null ? liveTemplate.path("language").asText(null) : null)
+                .templateCategory(template != null ? template.path("category").asText(null) : null)
+                .templateLanguage(template != null ? template.path("language").asText(null) : null)
                 .clientMessageId(req.getClientMessageId())
                 .bodyText(req.getMessage())
                 .mediaUrl(req.getMediaUrl())
-                .status(status)
-                .errorMessage(errorMessage)
-                .sentByUser(currentUser)
-                .build();
+                .sentByUser(currentUser));
+        if (reserved.existing() != null) return reserved.existing();
 
-        WhatsAppMessage saved = messageRepo.save(message);
+        Sent sent = target.config() == null ? Sent.notConnected() : attempt(() -> {
+            List<Map<String, Object>> templateComponents = null;
+            if (req.getTemplateBodyParams() != null && !req.getTemplateBodyParams().isEmpty()) {
+                List<Map<String, Object>> parameters = new ArrayList<>();
+                List<String> names = new ArrayList<>();
+                if (template != null && "NAMED".equals(template.path("parameter_format").asText()))
+                    for (var c : template.path("components")) if ("BODY".equals(c.path("type").asText())) names = WhatsAppTemplateValidation.variableNames(c.path("text").asText());
+                for (int i = 0; i < req.getTemplateBodyParams().size(); i++) {
+                    Map<String, Object> parameter = new java.util.LinkedHashMap<>();
+                    parameter.put("type", "text"); parameter.put("text", req.getTemplateBodyParams().get(i));
+                    if (!names.isEmpty()) parameter.put("parameter_name", names.get(i));
+                    parameters.add(parameter);
+                }
+                templateComponents = List.of(Map.of("type", "body", "parameters", parameters));
+            }
+            String wamid = "TEMPLATE".equals(messageType)
+                    ? graphApiClient.sendTemplateMessage(target.config(), target.customerWaId(), req.getTemplateName(),
+                            req.getTemplateLanguage() != null ? req.getTemplateLanguage() : "en_US", templateComponents)
+                    : graphApiClient.sendTextMessage(target.config(), target.customerWaId(), req.getMessage());
+            return new String[]{wamid};
+        });
 
-        conversation.setLastMessageText(req.getMessage());
-        conversation.setLastMessageAt(LocalDateTime.now());
-        conversation.setLastMessageSentBy(currentUser);
-        conversationRepo.save(conversation);
-
-        WhatsAppMessageDto messageDto = mapMessageToDto(saved);
-        messageDto.setClientMessageId(req.getClientMessageId());
-
-        // Realtime broadcast to live chat UI
-        broadcast("/topic/whatsapp/conversation/" + conversation.getId(), messageDto);
-        broadcast("/topic/whatsapp/company/" + conversation.getCompany().getId(), mapConversationToDto(conversation));
-
-        return messageDto;
+        return complete(reserved.messageId(), sent, conversation -> {
+            conversation.setLastMessageText(req.getMessage());
+            conversation.setLastMessageSentBy(currentUser);
+        });
     }
 
-    @Transactional
+    /** Agent attachment send (also used by the quotation PDF send). S3-d: upload and send outside any transaction. */
     public WhatsAppMessageDto sendMediaMessage(Long conversationId, byte[] fileBytes, String originalFilename, String contentType, String caption, String clientMessageId) {
-        access.record(com.leads.model.entity.WhatsAppConversation.class, conversationId);
-        WhatsAppConversation conversation = conversationRepo.findForSending(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + conversationId));
-        entityManager.refresh(conversation, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
-
         validateClientId(clientMessageId);
-        if (clientMessageId != null) {
-            var existing = messageRepo.findByConversationIdAndClientMessageId(conversationId, clientMessageId);
-            if (existing.isPresent()) return mapMessageToDto(existing.get());
-        }
-
-        WhatsAppMessagingPolicy.requireOpen(conversation);
-
-        User currentUser = authService.getCurrentUser();
         String mimeType = WhatsAppAttachmentPolicy.validate(fileBytes, originalFilename, contentType, caption);
         String mediaType = mimeType.startsWith("image/") ? "image"
                 : mimeType.startsWith("video/") ? "video"
                 : mimeType.startsWith("audio/") ? "audio"
                 : "document";
+        SendTarget target = readTarget(conversationId, true, clientMessageId, WhatsAppMessagingPolicy::requireOpen);
+        if (target.existing() != null) return target.existing();
+        User currentUser = authService.getCurrentUser();
 
-        WhatsAppConfiguration config = conversation.getReceivingPhoneNumberId() != null
-                ? configRepo.findByPhoneNumberId(conversation.getReceivingPhoneNumberId()).orElse(null)
-                : null;
-
-        String wamid;
-        String metaMediaId = null;
-        MessageStatus status;
-        String errorMessage = null;
-        if (config == null || !Boolean.TRUE.equals(config.getIsActive())) {
-            wamid = "wamid.local." + java.util.UUID.randomUUID();
-            status = MessageStatus.FAILED;
-            errorMessage = "This conversation's WhatsApp number isn't connected — set it up under WhatsApp Setup.";
-        } else {
-            try {
-                metaMediaId = graphApiClient.uploadMedia(config, fileBytes, mimeType, originalFilename);
-                wamid = graphApiClient.sendMediaMessage(config, conversation.getCustomerWaId(), mediaType, metaMediaId, caption, originalFilename);
-                status = MessageStatus.ACCEPTED;
-            } catch (WhatsAppApiException ex) {
-                wamid = "wamid.failed." + java.util.UUID.randomUUID();
-                status = ex.getCause() instanceof org.springframework.web.client.ResourceAccessException ? MessageStatus.UNKNOWN : MessageStatus.FAILED;
-                errorMessage = ex.getMessage() != null && ex.getMessage().length() > 255
-                        ? ex.getMessage().substring(0, 255) : ex.getMessage();
-            }
-        }
-
-        WhatsAppMessage message = WhatsAppMessage.builder()
-                .conversation(conversation)
-                .wamid(wamid)
-                .direction(MessageDirection.OUTBOUND)
+        Reserved reserved = reserve(conversationId, clientMessageId, conversation -> WhatsAppMessage.builder()
                 .messageType(mediaType.toUpperCase())
                 .clientMessageId(clientMessageId)
                 .bodyText(caption)
-                .mediaId(metaMediaId)
                 .mediaMimeType(mimeType)
                 .mediaFileName(originalFilename)
-                .status(status)
-                .errorMessage(errorMessage)
-                .sentByUser(currentUser)
-                .build();
+                .sentByUser(currentUser));
+        if (reserved.existing() != null) return reserved.existing();
 
-        WhatsAppMessage saved = messageRepo.save(message);
+        Sent sent = target.config() == null ? Sent.notConnected() : attempt(() -> {
+            String metaMediaId = graphApiClient.uploadMedia(target.config(), fileBytes, mimeType, originalFilename);
+            return new String[]{graphApiClient.sendMediaMessage(target.config(), target.customerWaId(), mediaType, metaMediaId, caption, originalFilename), metaMediaId};
+        });
 
-        // We already hold the bytes we just uploaded — cache them locally
-        // now so the sender's own view of this message never needs a
-        // round trip back to Meta to render it.
-        if (status == MessageStatus.ACCEPTED) {
-            mediaService.cacheOutboundMedia(saved.getId(), mimeType, fileBytes);
-        }
-
-        conversation.setLastMessageText(caption != null && !caption.isBlank() ? caption : previewTextFor(mediaType, originalFilename));
-        conversation.setLastMessageAt(LocalDateTime.now());
-        conversation.setLastMessageSentBy(currentUser);
-        conversationRepo.save(conversation);
-
-        WhatsAppMessageDto messageDto = mapMessageToDto(saved);
-        messageDto.setClientMessageId(clientMessageId);
-        broadcast("/topic/whatsapp/conversation/" + conversation.getId(), messageDto);
-        broadcast("/topic/whatsapp/company/" + conversation.getCompany().getId(), mapConversationToDto(conversation));
-
-        return messageDto;
+        // We already hold the bytes we just uploaded: cache them so the sender's own view never round-trips to Meta.
+        if (sent.status() == MessageStatus.ACCEPTED) mediaService.cacheOutboundMedia(reserved.messageId(), mimeType, fileBytes);
+        return complete(reserved.messageId(), sent, conversation -> {
+            conversation.setLastMessageText(caption != null && !caption.isBlank() ? caption : previewTextFor(mediaType, originalFilename));
+            conversation.setLastMessageSentBy(currentUser);
+        });
     }
 
     private String previewTextFor(String mediaType, String filename) {

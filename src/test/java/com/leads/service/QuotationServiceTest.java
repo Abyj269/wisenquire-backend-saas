@@ -26,6 +26,8 @@ class QuotationServiceTest {
     @Mock AuthService authService;
     @Mock LeadService leadService;
     @org.mockito.Spy CompanyClock companyClock = new CompanyClock(java.time.Clock.system(CompanyClock.SERVER_ZONE));
+    /** S3-d (module 12): sendViaWhatsApp runs its own short transactions. */
+    @Mock org.springframework.transaction.PlatformTransactionManager txManager;
     @InjectMocks QuotationService service;
 
     @Test void sentQuotationCannotBeDeleted() {

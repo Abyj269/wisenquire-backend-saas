@@ -39,8 +39,13 @@ class FeatureFlagsIT extends AbstractIntegrationTest {
         Set<String> db = new HashSet<>(jdbc.queryForList("SELECT flag_key FROM feature_flags", String.class));
         Set<String> code = Arrays.stream(FeatureFlag.values()).map(f -> f.key).collect(Collectors.toSet());
         assertEquals(code, db, "V5x seed and FeatureFlag enum differ");
-        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM feature_flags WHERE enabled_default = 1", Integer.class),
-                "every flag must start OFF (old behaviour)");
+        // Every flag starts OFF (old behaviour), except refinements of a flag that is itself OFF: they change
+        // nothing until their parent is switched on. Module 12 P1 (V75): own_scope.customer_via_chats only
+        // acts under own_scope.enforced (OFF), so it defaults ON once conversation OWN rules exist.
+        Set<String> onByDefault = new HashSet<>(jdbc.queryForList("SELECT flag_key FROM feature_flags WHERE enabled_default = 1", String.class));
+        assertEquals(Set.of("own_scope.customer_via_chats"), onByDefault, "every flag must start OFF (old behaviour), except the documented refinements");
+        assertEquals(0, jdbc.queryForObject("SELECT enabled_default FROM feature_flags WHERE flag_key = 'own_scope.enforced'", Integer.class),
+                "the parent of the ON-by-default refinement stays OFF");
     }
 
     @Test

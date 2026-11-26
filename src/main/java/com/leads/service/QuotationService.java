@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 public class QuotationService {
     private final TenantAccess access;
     private final CompanyClock companyClock;
+    private final org.springframework.transaction.PlatformTransactionManager txManager;
     private final DocumentNumberService numbers;
 
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
@@ -175,45 +176,56 @@ public class QuotationService {
      * already handles the Meta upload + send — no new WhatsApp-side plumbing
      * needed here). Flips status to SENT once it succeeds.
      */
-    // KNOWN VIOLATION of CLAUDE.md hard rule 2 (found in module 08 P1, owner decision: fix in module 12):
-    // this transaction stays open across sendMediaMessage's Meta upload/send, and sendMediaMessage is
-    // itself @Transactional. Module 12 restructures the WhatsApp send path (outbox) and closes both.
-    @Transactional(noRollbackFor = com.leads.exception.WhatsAppApiException.class)
+    /**
+     * Renders the quotation PDF and sends it into the lead's WhatsApp conversation, then marks it SENT.
+     * Module 12 P1 part 2 (S3-d, CLAUDE.md hard rule 2; closes the violation found in module 08): the
+     * checks and the PDF run in a short transaction, the send (WhatsAppCloudService.sendMediaMessage,
+     * which manages its own short transactions) runs with none open, and SENT is recorded in another.
+     */
     public QuotationDto sendViaWhatsApp(Long id, Long explicitConversationId) {
-        Quotation quotation = findOrThrow(id);
-        User currentUser = authService.getCurrentUser();
+        record Prepared(Long conversationId, byte[] pdf, String filename, String caption) { }
+        Prepared prepared = tx().execute(st -> {
+            Quotation quotation = findOrThrow(id);
+            User currentUser = authService.getCurrentUser();
+            Long conversationId = explicitConversationId;
+            if (conversationId == null) {
+                WhatsAppConversation conv = conversationRepo.findByLeadId(quotation.getLead().getId())
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "This lead doesn't have a WhatsApp conversation yet — start one before sending a quotation this way."));
+                conversationId = conv.getId();
+            }
+            WhatsAppConversation recipient = access.record(WhatsAppConversation.class, conversationId);
+            if (recipient.getLead() == null || !recipient.getLead().getId().equals(quotation.getLead().getId())
+                    || !recipient.getCompany().getId().equals(quotation.getCompany().getId())
+                    || !com.leads.util.PhoneNumberUtil.canonical(recipient.getCustomerWaId()).equals(
+                            com.leads.util.PhoneNumberUtil.canonical(quotation.getCustomerPhone()))) {
+                throw new IllegalArgumentException("Select the linked lead's conversation with the quotation customer's phone number.");
+            }
+            return new Prepared(conversationId, pdfService.render(quotation, currentUser),
+                    "Quotation-" + quotation.getQuotationNumber() + ".pdf",
+                    "Quotation " + quotation.getQuotationNumber() + " — total " + quotation.getCurrency() + " " + quotation.getGrandTotal());
+        });
 
-        Long conversationId = explicitConversationId;
-        if (conversationId == null) {
-            WhatsAppConversation conv = conversationRepo.findByLeadId(quotation.getLead().getId())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "This lead doesn't have a WhatsApp conversation yet — start one before sending a quotation this way."));
-            conversationId = conv.getId();
-        }
-
-        WhatsAppConversation recipient = access.record(WhatsAppConversation.class, conversationId);
-        if (recipient.getLead() == null || !recipient.getLead().getId().equals(quotation.getLead().getId())
-                || !recipient.getCompany().getId().equals(quotation.getCompany().getId())
-                || !com.leads.util.PhoneNumberUtil.canonical(recipient.getCustomerWaId()).equals(
-                        com.leads.util.PhoneNumberUtil.canonical(quotation.getCustomerPhone()))) {
-            throw new IllegalArgumentException("Select the linked lead's conversation with the quotation customer's phone number.");
-        }
-        byte[] pdfBytes = pdfService.render(quotation, currentUser);
-        String filename = "Quotation-" + quotation.getQuotationNumber() + ".pdf";
-        String caption = "Quotation " + quotation.getQuotationNumber() + " — total " + quotation.getCurrency() + " " + quotation.getGrandTotal();
-        var delivery = whatsAppCloudService.sendMediaMessage(conversationId, pdfBytes, filename, "application/pdf", caption, null);
+        var delivery = whatsAppCloudService.sendMediaMessage(prepared.conversationId(), prepared.pdf(), prepared.filename(), "application/pdf", prepared.caption(), null);
         if (delivery == null || delivery.getStatus() == com.leads.model.enums.MessageStatus.FAILED
                 || delivery.getStatus() == com.leads.model.enums.MessageStatus.UNKNOWN
                 || delivery.getWamid() == null || delivery.getWamid().isBlank()) {
             throw new com.leads.exception.WhatsAppApiException("Quotation delivery failed. Check the conversation before retrying.");
         }
 
-        quotation.setStatus(QuotationStatus.SENT);
-        Quotation saved = quotationRepo.save(quotation);
-        leadService.recordActivity(saved.getLead(), ActivityType.QUOTATION, "Quotation Sent via WhatsApp",
-                "Quotation " + saved.getQuotationNumber() + " (" + saved.getCurrency() + " " + saved.getGrandTotal() + ") was sent to the customer via WhatsApp.",
-                currentUser);
-        return mapToDto(saved);
+        return tx().execute(st -> {
+            Quotation quotation = findOrThrow(id);
+            quotation.setStatus(QuotationStatus.SENT);
+            Quotation saved = quotationRepo.save(quotation);
+            leadService.recordActivity(saved.getLead(), ActivityType.QUOTATION, "Quotation Sent via WhatsApp",
+                    "Quotation " + saved.getQuotationNumber() + " (" + saved.getCurrency() + " " + saved.getGrandTotal() + ") was sent to the customer via WhatsApp.",
+                    authService.getCurrentUser());
+            return mapToDto(saved);
+        });
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate tx() {
+        return new org.springframework.transaction.support.TransactionTemplate(txManager);
     }
 
     private Quotation findOrThrow(Long id) {

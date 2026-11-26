@@ -27,13 +27,19 @@ class WhatsAppSendPolicyTest {
     @Mock WhatsAppGraphApiClient graphApiClient;
     @Mock WhatsAppMediaService mediaService;
     @Mock SimpMessagingTemplate messagingTemplate;
+    /** S3-d (module 12): the sends run their own short transactions through this manager. */
+    @Mock org.springframework.transaction.PlatformTransactionManager transactions;
     @InjectMocks WhatsAppCloudService service;
     WhatsAppConversation conversation;
 
     @BeforeEach void setup() {
         conversation = WhatsAppConversation.builder().id(1L).company(Company.builder().id(2L).build())
                 .receivingPhoneNumberId("business-number").customerWaId("971501234567").build();
-        when(conversationRepo.findForSending(1L)).thenReturn(Optional.of(conversation));
+        lenient().when(conversationRepo.findForSending(1L)).thenReturn(Optional.of(conversation));
+        lenient().when(conversationRepo.findById(1L)).thenReturn(Optional.of(conversation));
+        // Step 3 (complete) reloads the reserved message: return the last one saved.
+        lenient().when(messageRepo.findById(any())).thenAnswer(inv -> mockingDetails(messageRepo).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("save")).reduce((x, y) -> y).map(i -> (WhatsAppMessage) i.getArgument(0)));
     }
     @Test void closedWindowBlocksTextBeforeProviderCall() {
         assertThrows(ResponseStatusException.class, () -> service.sendMessage(SendMessageRequest.builder().conversationId(1L).message("Test").build()));
@@ -88,7 +94,7 @@ class WhatsAppSendPolicyTest {
                 .messageType("TEMPLATE").templateName("approved_greeting").build());
         assertEquals(MessageStatus.ACCEPTED, result.getStatus());
         assertNull(conversation.getLastCustomerMessageEpoch());
-        verify(messageRepo).save(argThat(msg -> "UTILITY".equals(msg.getTemplateCategory()) && "en_US".equals(msg.getTemplateLanguage())));
+        verify(messageRepo, atLeastOnce()).save(argThat(msg -> "UTILITY".equals(msg.getTemplateCategory()) && "en_US".equals(msg.getTemplateLanguage())));
         verify(graphApiClient, never()).sendTextMessage(any(), anyString(), anyString());
     }
     @Test void namedBodyValuesUseMetaParameterNames() throws Exception {
