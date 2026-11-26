@@ -63,4 +63,14 @@ class QuotationPdfRenderTest {
         org.junit.jupiter.api.Assertions.assertEquals("11 Mar 2026, 12:01 AM", pdf.printedAtText(india), "18:31 UTC = 00:01 IST on the 11th");
         org.junit.jupiter.api.Assertions.assertEquals("10 Mar 2026, 10:31 PM", pdf.printedAtText(dubai));
     }
+
+    /** Module 08 P1 follow-up: a stored invalid logo no longer blocks the PDF; it prints without it. */
+    @org.junit.jupiter.api.Test
+    void anInvalidStoredLogoIsLeftOutInsteadOfFailing() {
+        org.junit.jupiter.api.Assertions.assertNull(QuotationPdfService.printableLogo("null"));
+        org.junit.jupiter.api.Assertions.assertNull(QuotationPdfService.printableLogo("https://example.com/logo.png"));
+        org.junit.jupiter.api.Assertions.assertNull(QuotationPdfService.printableLogo(""));
+        String png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        org.junit.jupiter.api.Assertions.assertEquals(png, QuotationPdfService.printableLogo(png));
+    }
 }

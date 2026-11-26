@@ -46,7 +46,7 @@ public class TenantManagementService {
                 .code(dto.getCode().toUpperCase())
                 .slug(OrganizationSlugs.unique(dto.getCode(), orgRepo::existsBySlug))
                 .subscriptionPlan(dto.getSubscriptionPlan() != null ? dto.getSubscriptionPlan() : "ENTERPRISE")
-                .logoUrl(dto.getLogoUrl())
+                .logoUrl(validLogo(dto.getLogoUrl()))
                 .isActive(dto.getIsActive() != null ? dto.getIsActive() : true)
                 .build();
         return mapOrgToDto(orgRepo.save(org));
@@ -63,7 +63,7 @@ public class TenantManagementService {
         if (dto.getSubscriptionPlan() != null) {
             org.setSubscriptionPlan(dto.getSubscriptionPlan());
         }
-        org.setLogoUrl(dto.getLogoUrl());
+        org.setLogoUrl(validLogo(dto.getLogoUrl(), org.getLogoUrl()));
         if (dto.getIsActive() != null) {
             org.setIsActive(dto.getIsActive());
         }
@@ -112,7 +112,7 @@ public class TenantManagementService {
                 .code(dto.getCode().toUpperCase())
                 .taxNumber(dto.getTaxNumber())
                 .currency(dto.getCurrency() != null ? dto.getCurrency() : "USD")
-                .logoUrl(dto.getLogoUrl())
+                .logoUrl(validLogo(dto.getLogoUrl()))
                 .timezone(dto.getTimezone() != null ? dto.getTimezone() : "Asia/Dubai")
                 .isActive(dto.getIsActive() != null ? dto.getIsActive() : true)
                 .build();
@@ -135,7 +135,7 @@ public class TenantManagementService {
         if (dto.getCurrency() != null) {
             company.setCurrency(dto.getCurrency());
         }
-        company.setLogoUrl(dto.getLogoUrl());
+        company.setLogoUrl(validLogo(dto.getLogoUrl(), company.getLogoUrl()));
         if (dto.getTimezone() != null) {
             // Only a CHANGE is checked: a legacy zone kept as it is must not block other edits.
             if (!dto.getTimezone().equals(company.getTimezone())) timezones.check(company.getOrganization().getId(), dto.getTimezone());
@@ -145,6 +145,21 @@ public class TenantManagementService {
             company.setIsActive(dto.getIsActive());
         }
         return mapCompanyToDto(companyRepo.save(company));
+    }
+
+    /**
+     * Module 08 P1 follow-up: a logo is checked when it is SAVED (PNG/JPEG data URI, size limit),
+     * not only when a quotation PDF is rendered. A bad value used to save fine and then block every
+     * PDF of that company with a 400. Blank = no logo.
+     */
+    private static String validLogo(String logo) {
+        com.leads.util.InputRules.logo(logo);
+        return logo == null || logo.isBlank() ? null : logo;
+    }
+
+    /** On update only a CHANGED logo is checked: an old stored value sent back unchanged must not block other edits. */
+    private static String validLogo(String logo, String current) {
+        return java.util.Objects.equals(logo, current) ? logo : validLogo(logo);
     }
 
     // --- Branches ---
@@ -171,7 +186,7 @@ public class TenantManagementService {
                 .ipRestrictionEnabled(Boolean.TRUE.equals(dto.getIpRestrictionEnabled()))
                 .defaultCurrency(dto.getDefaultCurrency())
                 .defaultVatPercent(dto.getDefaultVatPercent())
-                .logoUrl(dto.getLogoUrl())
+                .logoUrl(validLogo(dto.getLogoUrl()))
                 .address(dto.getAddress())
                 .trnNumber(dto.getTrnNumber())
                 .quotationTerms(dto.getQuotationTerms())
@@ -198,7 +213,7 @@ public class TenantManagementService {
         }
         branch.setDefaultCurrency(dto.getDefaultCurrency());
         branch.setDefaultVatPercent(dto.getDefaultVatPercent());
-        branch.setLogoUrl(dto.getLogoUrl());
+        branch.setLogoUrl(validLogo(dto.getLogoUrl(), branch.getLogoUrl()));
         branch.setAddress(dto.getAddress());
         branch.setTrnNumber(dto.getTrnNumber());
         branch.setQuotationTerms(dto.getQuotationTerms());

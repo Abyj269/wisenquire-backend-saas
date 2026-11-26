@@ -137,6 +137,32 @@ class TenantAdminIT extends AbstractIntegrationTest {
         assertEquals(before, fixture.state(User.class, user, u -> u.getFirstName() + "|" + u.getAllowedCompanies().size()));
     }
 
+    // ---- logos are validated when saved (module 08 P1 follow-up) ----------------------------------
+
+    private static final String PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+    @Test
+    void anInvalidLogoIsRefusedWhenSavedButAnUnchangedOldOneDoesNotBlockEdits() throws Exception {
+        Long company = fixture.freshCompany(Slot.A1a);
+        String code = fixture.state(Company.class, company, Company::getCode);
+        java.util.function.Function<Object, java.util.Map<String, Object>> body = logo -> {
+            java.util.Map<String, Object> m = new java.util.HashMap<>(Map.of("name", "IT Logo Co", "code", code));
+            m.put("logoUrl", logo);
+            return m;
+        };
+        MockHttpServletResponse bad = send(Persona.ORG_ADMIN, put("/tenant/companies/{id}", company), body.apply("https://evil.example/logo.png"));
+        assertEquals(400, bad.getStatus(), bad.getContentAsString());
+        assertEquals("VALIDATION_FAILED", json.readTree(bad.getContentAsString()).path("code").asText());
+        assertEquals("null", fixture.state(Company.class, company, Company::getLogoUrl), "nothing saved");
+
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/tenant/companies/{id}", company), body.apply(PNG)).getStatus(), "a PNG data URI is fine");
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/tenant/companies/{id}", company), body.apply(null)).getStatus(), "no logo is fine");
+
+        // A legacy invalid logo saved before this check: sending it back unchanged still allows the edit.
+        jdbc.update("UPDATE companies SET logo_url = 'http://old.example/logo.png' WHERE id = ?", company);
+        assertEquals(200, send(Persona.ORG_ADMIN, put("/tenant/companies/{id}", company), body.apply("http://old.example/logo.png")).getStatus());
+    }
+
     // ---- organizations: name not unique, slug unique ---------------------------------------------
 
     @Test

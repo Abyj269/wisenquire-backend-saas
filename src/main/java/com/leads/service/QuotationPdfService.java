@@ -32,6 +32,21 @@ public class QuotationPdfService {
     private final TemplateEngine templateEngine;
     private final CompanyClock companyClock;
 
+    /**
+     * Module 08 P1 follow-up: a logo saved before save-time validation existed may be invalid. The PDF
+     * then prints without a letterhead logo (and logs it) instead of failing with a 400.
+     */
+    static String printableLogo(String logo) {
+        if (logo == null || logo.isBlank()) return null;
+        try {
+            com.leads.util.InputRules.logo(logo);
+            return logo;
+        } catch (IllegalArgumentException e) {
+            org.slf4j.LoggerFactory.getLogger(QuotationPdfService.class).warn("Quotation PDF: stored logo is not a valid PNG/JPEG data URI; printing without it");
+            return null;
+        }
+    }
+
     /** D15 (module 08 P1): "Printed at" is the company's local time (was the server clock). */
     String printedAtText(com.leads.model.entity.Company company) {
         return DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", java.util.Locale.ENGLISH).format(companyClock.now(company));
@@ -45,8 +60,7 @@ public class QuotationPdfService {
         context.setVariable("company", quotation.getCompany());
         context.setVariable("quotation", quotation);
         context.setVariable("items", quotation.getItems());
-        String logo = firstNonBlank(branch.getLogoUrl(), quotation.getCompany().getLogoUrl());
-        com.leads.util.InputRules.logo(logo);
+        String logo = printableLogo(firstNonBlank(branch.getLogoUrl(), quotation.getCompany().getLogoUrl()));
         context.setVariable("letterheadLogoUrl", logo);
         context.setVariable("letterheadTrnNumber", firstNonBlank(branch.getTrnNumber(), quotation.getCompany().getTaxNumber()));
         context.setVariable("branchAddress", branch.getAddress());
