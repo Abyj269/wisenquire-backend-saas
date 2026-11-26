@@ -94,6 +94,22 @@ public class TenantFixture {
     public Long freshCustomer(Slot s) { return inTx(() -> { Customer c = newCustomer(s); newLead(s, c.getId()); return c.getId(); }); }
     public Long freshBroadcast(Slot s) { return inTx(() -> newBroadcast(s, false).getId()); }
     public Long freshCompanyWideBroadcast(Slot s) { return inTx(() -> newBroadcast(s, true).getId()); }
+
+    /**
+     * Module 16 part 2: a broadcast on {@code s}'s branch using a fresh, inactive WhatsApp number. Sending it
+     * succeeds (200) and the executor then marks it FAILED before any Meta call, so the matrix can have an
+     * allowed send row without Meta traffic.
+     */
+    public Long freshBroadcastOnInactiveNumber(Slot s) {
+        Long config = freshWhatsAppConfig(s);
+        return inTx(() -> {
+            WhatsAppConfiguration c = em.find(WhatsAppConfiguration.class, config);
+            c.setIsActive(false);
+            Broadcast b = newBroadcast(s, false);
+            b.setWhatsappConfiguration(c);
+            return b.getId();
+        });
+    }
     public Long freshConversation(Slot s) { return inTx(() -> newConversation(s).getId()); }
 
     /** A snapshot of one record's fields, for "a denied write changed nothing" probes. */

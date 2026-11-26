@@ -35,6 +35,10 @@ class BroadcastServiceImplTest {
     @Mock org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor broadcastExecutor;
     @InjectMocks BroadcastServiceImpl service;
 
+    /** Module 16 part 2: a LEVEL caller (a mocked Long would otherwise be 0, i.e. "OWN user 0"). */
+    @org.junit.jupiter.api.BeforeEach
+    void levelCaller() { lenient().when(access.ownerFilter()).thenReturn(null); }
+
     final Pageable page = PageRequest.of(0, 20);
     final Company companyA = Company.builder().id(10L).build();
     final Company companyB = Company.builder().id(20L).build();

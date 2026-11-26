@@ -58,6 +58,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional
     public BroadcastDto createBroadcast(BroadcastCreateRequest request) {
         access.permission("BROADCASTS:ADD");
+        refuseOwn();
 
         // F-1: company, branch and WhatsApp number must all be inside the caller's scope and belong together.
         Company company = access.company(request.getCompanyId());
@@ -89,7 +90,10 @@ public class BroadcastServiceImpl implements BroadcastService {
             }
         }
 
-        BroadcastStatus initialStatus = request.getScheduledAt() != null && request.getScheduledAt().isAfter(LocalDateTime.now())
+        // D15 (module 16 P1 part 2): the schedule input is the company's local time; stored as server wall-clock
+        // like every other column, so the scheduler (server time) is unchanged.
+        LocalDateTime scheduledServer = request.getScheduledAt() == null ? null : companyClock.toServer(company, request.getScheduledAt());
+        BroadcastStatus initialStatus = scheduledServer != null && scheduledServer.isAfter(companyClock.serverNow())
                 ? BroadcastStatus.SCHEDULED
                 : BroadcastStatus.DRAFT;
 
@@ -105,12 +109,21 @@ public class BroadcastServiceImpl implements BroadcastService {
                 .audienceType(request.getAudienceType())
                 .audienceFilterJson(request.getAudienceFilterJson())
                 .status(initialStatus)
-                .scheduledAt(request.getScheduledAt())
+                .scheduledAt(scheduledServer)
                 .build();
 
         Broadcast saved = broadcastRepo.save(broadcast);
 
-        // Resolve recipients and save initial PENDING records
+        if (flags.isOn(com.leads.flags.FeatureFlag.BROADCAST_CHUNKED_TX, company.getOrganization().getId())) {
+            Long savedId = saved.getId();
+            broadcastRepo.flush();
+            int total = streamRecipients(savedId, company.getId(), request);
+            Broadcast reloaded = broadcastRepo.findById(savedId).orElseThrow();
+            reloaded.setTotalRecipients(total);
+            return mapToDto(broadcastRepo.save(reloaded));
+        }
+
+        // Flag OFF: resolve recipients in memory and save initial PENDING records (as before)
         List<BroadcastRecipient> recipients = resolveRecipients(saved, request);
         saved.setTotalRecipients(recipients.size());
         recipientRepo.saveAll(recipients);
@@ -122,6 +135,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional(readOnly = true)
     public BroadcastDto getBroadcastById(Long id) {
         access.permission("BROADCASTS:VIEW");
+        refuseOwn();
         access.record(Broadcast.class, id); // F-1
         Broadcast broadcast = broadcastRepo.findById(id)
                 .filter(b -> b.getDeletedAt() == null)
@@ -133,6 +147,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional(readOnly = true)
     public Page<BroadcastDto> getBroadcasts(Long companyId, Long branchId, Pageable pageable) {
         access.permission("BROADCASTS:VIEW");
+        refuseOwn();
         access.scope(companyId, branchId); // F-1
         Page<Broadcast> page;
         if (branchId != null) {
@@ -152,6 +167,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional
     public BroadcastDto sendBroadcast(Long broadcastId) {
         access.permission("BROADCASTS:SEND");
+        refuseOwn();
         access.record(Broadcast.class, broadcastId); // F-1 (also passes under the scheduler's inCompany scope)
         Broadcast broadcast = broadcastRepo.findById(broadcastId)
                 .filter(b -> b.getDeletedAt() == null)
@@ -527,6 +543,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional(readOnly = true)
     public Page<BroadcastRecipientDto> getBroadcastLogs(Long broadcastId, Pageable pageable) {
         access.permission("BROADCASTS:VIEW");
+        refuseOwn();
         Broadcast broadcast = access.record(Broadcast.class, broadcastId); // F-1
         if (broadcast.getDeletedAt() != null) {
             throw new IllegalArgumentException("Broadcast not found: " + broadcastId);
@@ -539,6 +556,7 @@ public class BroadcastServiceImpl implements BroadcastService {
     @Transactional
     public void deleteBroadcast(Long broadcastId) {
         access.permission("BROADCASTS:DELETE");
+        refuseOwn();
         access.record(Broadcast.class, broadcastId); // F-1
         Broadcast broadcast = broadcastRepo.findById(broadcastId)
                 .filter(b -> b.getDeletedAt() == null)
@@ -616,6 +634,118 @@ public class BroadcastServiceImpl implements BroadcastService {
             recipientRepo.save(recipient);
             broadcastRepo.incrementFailedCount(broadcastId);
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Module 16 P1 part 2 (P-10): streamed audience, flag broadcast.chunked_tx
+    // ──────────────────────────────────────────────────────────────
+
+    /** Rows read per keyset page and recipients inserted per batch (the IT profile lowers it to exercise paging). */
+    @org.springframework.beans.factory.annotation.Value("${broadcast.audience.page-size:500}")
+    private int audiencePageSize = 500;
+
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager em;
+
+    /**
+     * Same recipients, same order and same de-duplication as {@link #resolveRecipients}, but the
+     * audience is read in keyset pages (id &gt; last id) of plain columns and inserted in batches, with
+     * the persistence context cleared after each batch: memory no longer grows with the company's size.
+     * Returns the number of recipients inserted.
+     */
+    private int streamRecipients(Long broadcastId, Long companyId, BroadcastCreateRequest request) {
+        Set<String> seenPhones = new HashSet<>();
+        List<BroadcastRecipient> batch = new ArrayList<>();
+        int total = 0;
+        org.springframework.data.domain.PageRequest page = org.springframework.data.domain.PageRequest.of(0, audiencePageSize);
+
+        if (request.getAudienceType() == BroadcastAudienceType.ALL_LEADS) {
+            long after = 0;
+            while (true) {
+                List<Object[]> rows = leadRepo.broadcastAudiencePage(companyId, after, page);
+                if (rows.isEmpty()) break;
+                for (Object[] row : rows) {
+                    Long id = (Long) row[0];
+                    String phone = row[1] != null ? (String) row[1] : (String) row[2];
+                    if (phone != null && seenPhones.add(phone)) {
+                        batch.add(BroadcastRecipient.builder()
+                                .broadcast(em.getReference(Broadcast.class, broadcastId))
+                                .lead(em.getReference(Lead.class, id))
+                                .recipientPhone(phone)
+                                .recipientName(row[3] + (row[4] != null ? " " + row[4] : ""))
+                                .status(BroadcastRecipientStatus.PENDING)
+                                .build());
+                    }
+                    after = id;
+                }
+                total += flushBatch(batch);
+            }
+        } else if (request.getAudienceType() == BroadcastAudienceType.CUSTOM_NUMBERS) {
+            if (request.getCustomNumbers() == null || request.getCustomNumbers().isEmpty()) return 0;
+            List<String> cleanedPhones = request.getCustomNumbers().stream()
+                    .filter(p -> p != null && !p.isBlank())
+                    .map(p -> com.leads.util.PhoneNumberUtil.lastSignificantDigits(p.trim()))
+                    .filter(p -> !p.isBlank())
+                    .distinct()
+                    .collect(Collectors.toList());
+            Map<String, Object[]> phoneToCustomer = new HashMap<>();
+            for (int i = 0; i < cleanedPhones.size(); i += audiencePageSize) {
+                List<String> slice = cleanedPhones.subList(i, Math.min(cleanedPhones.size(), i + audiencePageSize));
+                for (Object[] row : customerRepo.broadcastAudienceByPhones(companyId, slice)) phoneToCustomer.put((String) row[1], row);
+            }
+            for (String cleanPhone : cleanedPhones) {
+                if (!seenPhones.add(cleanPhone)) continue;
+                Object[] matched = phoneToCustomer.get(cleanPhone);
+                batch.add(BroadcastRecipient.builder()
+                        .broadcast(em.getReference(Broadcast.class, broadcastId))
+                        .customer(matched != null ? em.getReference(Customer.class, (Long) matched[0]) : null)
+                        .recipientPhone(cleanPhone)
+                        .recipientName(matched != null ? (String) matched[2] : cleanPhone)
+                        .status(BroadcastRecipientStatus.PENDING)
+                        .build());
+                if (batch.size() >= audiencePageSize) total += flushBatch(batch);
+            }
+            total += flushBatch(batch);
+        } else {
+            // ALL_CUSTOMERS, and SPECIFIC_TAGS / SPECIFIC_SEGMENT fall back to every customer (as before)
+            long after = 0;
+            while (true) {
+                List<Object[]> rows = customerRepo.broadcastAudiencePage(companyId, after, page);
+                if (rows.isEmpty()) break;
+                for (Object[] row : rows) {
+                    Long id = (Long) row[0];
+                    String phone = (String) row[1];
+                    if (phone != null && seenPhones.add(phone)) {
+                        batch.add(BroadcastRecipient.builder()
+                                .broadcast(em.getReference(Broadcast.class, broadcastId))
+                                .customer(em.getReference(Customer.class, id))
+                                .recipientPhone(phone)
+                                .recipientName((String) row[2])
+                                .status(BroadcastRecipientStatus.PENDING)
+                                .build());
+                    }
+                    after = id;
+                }
+                total += flushBatch(batch);
+            }
+        }
+        return total;
+    }
+
+    private int flushBatch(List<BroadcastRecipient> batch) {
+        int n = batch.size();
+        if (n == 0) return 0;
+        recipientRepo.saveAll(batch);
+        recipientRepo.flush();
+        em.clear();
+        batch.clear();
+        return n;
+    }
+
+    /** D14 (module 16 P1 part 2): broadcasts are a manager feature; an OWN role holding BROADCASTS rights is refused. */
+    private void refuseOwn() {
+        if (access.ownerFilter() != null)
+            throw new org.springframework.security.access.AccessDeniedException("Broadcasts are not available to roles that see only their own records.");
     }
 
     private List<BroadcastRecipient> resolveRecipients(Broadcast broadcast, BroadcastCreateRequest request) {

@@ -34,6 +34,9 @@ broadcast:
     check-ms: 86400000
     # No start-up run in tests (TwoInstancesShedLockIT triggers the jobs itself). Default 0 = as before.
     initial-delay-ms: 86400000
+  # Module 16 P1 part 2: small audience pages so the ITs exercise keyset paging and batching.
+  audience:
+    page-size: 7
   # Module 16 P1: the recovery job is triggered by the tests themselves (BroadcastChunkedSendIT, TwoInstancesShedLockIT).
   recovery:
     check-ms: 86400000

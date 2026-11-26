@@ -56,6 +56,9 @@ public class CustomUserDetailsService implements UserDetailsService {
             String mod = permission.getModuleName().toUpperCase();
             if (Boolean.TRUE.equals(permission.getCanView())) authorities.add(new SimpleGrantedAuthority(mod + ":VIEW"));
             if (Boolean.TRUE.equals(permission.getCanAdd())) authorities.add(new SimpleGrantedAuthority(mod + ":ADD"));
+            // Module 16 P1 (owner decision A): no permission column maps to :SEND, so only a super admin could
+            // send a broadcast by hand. Whoever may create a broadcast may send it ("Save & Send Now").
+            if ("BROADCASTS".equals(mod) && Boolean.TRUE.equals(permission.getCanAdd())) authorities.add(new SimpleGrantedAuthority("BROADCASTS:SEND"));
             if (Boolean.TRUE.equals(permission.getCanEdit())) authorities.add(new SimpleGrantedAuthority(mod + ":EDIT"));
             if (Boolean.TRUE.equals(permission.getCanDelete())) authorities.add(new SimpleGrantedAuthority(mod + ":DELETE"));
             if (Boolean.TRUE.equals(permission.getCanExport())) authorities.add(new SimpleGrantedAuthority(mod + ":EXPORT"));

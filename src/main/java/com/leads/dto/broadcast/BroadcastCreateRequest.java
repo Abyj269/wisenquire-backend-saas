@@ -40,5 +40,6 @@ public class BroadcastCreateRequest {
 
     private List<String> customNumbers;
 
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Optional send time in the company's own timezone (D15, module 16); stored as server time.")
     private LocalDateTime scheduledAt;
 }

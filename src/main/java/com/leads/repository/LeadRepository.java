@@ -15,6 +15,10 @@ import java.util.Optional;
 
 @Repository
 public interface LeadRepository extends JpaRepository<Lead, Long>, JpaSpecificationExecutor<Lead> {
+
+    /** Module 16 P1 (P-10): one keyset page of a company's lead audience: [id, phone, whatsappNumber, firstName, lastName]. */
+    @Query("SELECT l.id, l.phone, l.whatsappNumber, l.firstName, l.lastName FROM Lead l WHERE l.company.id = :companyId AND l.id > :after ORDER BY l.id")
+    List<Object[]> broadcastAudiencePage(@Param("companyId") Long companyId, @Param("after") Long after, Pageable page);
     long countByCustomerId(Long customerId);
 
     // Backs TenantAccess.record(Customer.class, id) - a branch-restricted

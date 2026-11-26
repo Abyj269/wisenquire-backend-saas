@@ -20,10 +20,10 @@ final class BroadcastRows {
 
     static List<EndpointSpec> specs() {
         return List.of(
-                EndpointSpec.of("POST /broadcasts", BRANCH, (f, s, p) -> withJson(post("/broadcasts"), json(
+                foreignNumberRows(EndpointSpec.of("POST /broadcasts", BRANCH, (f, s, p) -> withJson(post("/broadcasts"), json(
                         "companyId", f.company(s), "branchId", f.branch(s), "whatsappConfigurationId", f.config(s),
                         "name", "IT matrix broadcast", "templateName", "hello_world",
-                        "audienceType", "CUSTOM_NUMBERS", "customNumbers", List.of(f.phone())))),
+                        "audienceType", "CUSTOM_NUMBERS", "customNumbers", List.of(f.phone()))))),
 
                 companyWideRows(EndpointSpec.of("GET /broadcasts/{id}", BRANCH,
                         (f, s, p) -> get("/broadcasts/{id}", f.broadcast(s))), false),
@@ -31,22 +31,30 @@ final class BroadcastRows {
                 EndpointSpec.of("GET /broadcasts", BRANCH,
                         (f, s, p) -> get("/broadcasts").param("companyId", str(f.company(s))).param("branchId", str(f.branch(s)))),
 
-                // FINDING (Step 3.2): BroadcastServiceImpl.sendBroadcast calls
-                // access.permission("BROADCASTS:SEND"), but no RolePermission column grants
-                // ":SEND" (CustomUserDetailsService), so only a super admin or the scheduler can
-                // send. ORG_ADMIN passes @PreAuthorize (ROLE_ORGANIZATION) and is then denied by
-                // that permission check, so the X-ORG row below is denied before the F-1 record
-                // check runs: it is not yet a discriminating row. Fix belongs to module 16.
+                // Module 16 P1 part 2: BROADCASTS:SEND = the Add right (was never granted). The target uses an
+                // inactive number, so an allowed send is accepted and then FAILS before any Meta call.
                 EndpointSpec.of("POST /broadcasts/{id}/send", BRANCH,
-                        (f, s, p) -> post("/broadcasts/{id}/send", watched(f, p, f.freshBroadcast(s))))
-                        .onlyFor(Persona.ORG_ADMIN)
-                        .noAllowedRow("BROADCASTS:SEND cannot be granted to any tenant role (finding, module 16)"),
+                        (f, s, p) -> post("/broadcasts/{id}/send", watched(f, p, f.freshBroadcastOnInactiveNumber(s)))),
 
                 companyWideRows(EndpointSpec.of("GET /broadcasts/{id}/logs", BRANCH,
                         (f, s, p) -> get("/broadcasts/{id}/logs", f.broadcast(s))), false),
 
                 companyWideRows(EndpointSpec.of("DELETE /broadcasts/{id}", BRANCH,
                         (f, s, p) -> delete("/broadcasts/{id}", watched(f, p, f.freshBroadcast(s)))), true));
+    }
+
+    /**
+     * Module 16 P1 part 2: the WhatsApp number must belong to the broadcast's own company and branch, even
+     * when the caller may see both (the org admin sees every company of its org).
+     */
+    private static EndpointSpec foreignNumberRows(EndpointSpec spec) {
+        spec.row(RowType.X_COMPANY, 'A', Persona.ORG_ADMIN, Slot.A1a, Outcome.DENIED, (f, s, p) -> withJson(post("/broadcasts"), json(
+                "companyId", f.company(Slot.A1a), "branchId", f.branch(Slot.A1a), "whatsappConfigurationId", f.config(Slot.A2a),
+                "name", "IT foreign number", "templateName", "hello_world", "audienceType", "CUSTOM_NUMBERS", "customNumbers", List.of(f.phone()))));
+        spec.row(RowType.X_BRANCH, 'A', Persona.ORG_ADMIN, Slot.A1a, Outcome.DENIED, (f, s, p) -> withJson(post("/broadcasts"), json(
+                "companyId", f.company(Slot.A1a), "branchId", f.branch(Slot.A1a), "whatsappConfigurationId", f.config(Slot.A1b),
+                "name", "IT other-branch number", "templateName", "hello_world", "audienceType", "CUSTOM_NUMBERS", "customNumbers", List.of(f.phone()))));
+        return spec;
     }
 
     /** F-1: a company-wide broadcast (no branch) needs company-wide scope. */

@@ -25,6 +25,7 @@ public class BroadcastDto {
     private BroadcastAudienceType audienceType;
     private String audienceFilterJson;
     private BroadcastStatus status;
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Server wall-clock (Asia/Dubai) like every other timestamp; render it in the company timezone.")
     private LocalDateTime scheduledAt;
     private LocalDateTime sentAt;
     private LocalDateTime completedAt;
