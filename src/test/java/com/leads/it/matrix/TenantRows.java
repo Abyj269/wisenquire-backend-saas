@@ -37,7 +37,7 @@ final class TenantRows {
                     return withJson(put("/tenant/organizations/{id}", org), json(
                             "name", f.state(Organization.class, org, Organization::getName),
                             "code", f.state(Organization.class, org, Organization::getCode),
-                            "logoUrl", f.state(Organization.class, org, Organization::getLogoUrl)));
+                            "logoUrl", orNull(f.state(Organization.class, org, Organization::getLogoUrl))));
                 }).onlyFor(Persona.ORG_ADMIN).deniedFor(Persona.COMPANY_MGR, Persona.BRANCH_MGR),
                 EndpointSpec.of("GET /tenant/organizations/{id}/summary", ORG,
                         (f, s, p) -> get("/tenant/organizations/{id}/summary", f.org(s.org())))
@@ -56,8 +56,8 @@ final class TenantRows {
                     return withJson(put("/tenant/companies/{id}", company), json(
                             "name", f.state(Company.class, company, Company::getName),
                             "code", f.state(Company.class, company, Company::getCode),
-                            "taxNumber", f.state(Company.class, company, Company::getTaxNumber),
-                            "logoUrl", f.state(Company.class, company, Company::getLogoUrl),
+                            "taxNumber", orNull(f.state(Company.class, company, Company::getTaxNumber)),
+                            "logoUrl", orNull(f.state(Company.class, company, Company::getLogoUrl)),
                             "timezone", f.state(Company.class, company, Company::getTimezone)));
                 }).onlyFor(MANAGERS),
 
@@ -128,6 +128,9 @@ final class TenantRows {
                             "allowedCompanyIds", List.of(f.company(s)), "allowedBranchIds", List.of(f.branch(s))));
                 }).onlyFor(MANAGERS).deniedFor(AGENTS));
     }
+
+    /** {@code TenantFixture.state} renders a null field as "null"; send a real JSON null instead (a "null" logo broke PDFs). */
+    private static String orNull(String value) { return "null".equals(value) ? null : value; }
 
     /** A number no other call in this run has used (codes, role names, IPs). */
     private static int unique(com.leads.it.fixture.TenantFixture f) {

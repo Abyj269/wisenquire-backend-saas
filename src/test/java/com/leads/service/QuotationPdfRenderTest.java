@@ -40,7 +40,7 @@ class QuotationPdfRenderTest {
                 .createdAt(LocalDateTime.of(2026, 11, 24, 10, 0))
                 .build();
 
-        byte[] pdf = new QuotationPdfService(engine).render(quotation, null);
+        byte[] pdf = new QuotationPdfService(engine, new CompanyClock(java.time.Clock.system(CompanyClock.SERVER_ZONE))).render(quotation, null);
 
         assertTrue(pdf.length > 500, "PDF should not be empty");
         assertEquals("%PDF", new String(pdf, 0, 4, StandardCharsets.US_ASCII));
@@ -51,5 +51,16 @@ class QuotationPdfRenderTest {
         var location = Class.forName("org.apache.commons.logging.LogFactory")
                 .getProtectionDomain().getCodeSource().getLocation().toString();
         assertTrue(location.contains("spring-jcl"), "LogFactory loaded from " + location);
+    }
+
+    /** Module 08 P1 (D15): the printed time is the company's local time. */
+    @org.junit.jupiter.api.Test
+    void printedAtIsInTheCompanysZone() {
+        java.time.Clock at = java.time.Clock.fixed(java.time.Instant.parse("2026-03-10T18:31:00Z"), java.time.ZoneOffset.UTC);
+        QuotationPdfService pdf = new QuotationPdfService(null, new CompanyClock(at));
+        com.leads.model.entity.Company india = com.leads.model.entity.Company.builder().timezone("Asia/Kolkata").build();
+        com.leads.model.entity.Company dubai = com.leads.model.entity.Company.builder().timezone("Asia/Dubai").build();
+        org.junit.jupiter.api.Assertions.assertEquals("11 Mar 2026, 12:01 AM", pdf.printedAtText(india), "18:31 UTC = 00:01 IST on the 11th");
+        org.junit.jupiter.api.Assertions.assertEquals("10 Mar 2026, 10:31 PM", pdf.printedAtText(dubai));
     }
 }

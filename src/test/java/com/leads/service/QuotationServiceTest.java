@@ -25,6 +25,7 @@ class QuotationServiceTest {
     @Mock QuotationPdfService pdfService;
     @Mock AuthService authService;
     @Mock LeadService leadService;
+    @org.mockito.Spy CompanyClock companyClock = new CompanyClock(java.time.Clock.system(CompanyClock.SERVER_ZONE));
     @InjectMocks QuotationService service;
 
     @Test void sentQuotationCannotBeDeleted() {

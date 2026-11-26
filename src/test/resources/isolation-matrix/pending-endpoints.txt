@@ -6,14 +6,6 @@
 # (EndpointCoverageIT.PENDING_CEILING); lower the ceiling whenever lines are removed.
 
 # --- module 02 auth-identity
-# --- module 08 quotations
-DELETE /quotations/{id}  # module 08 quotations (QuotationController)
-GET /quotations  # module 08 quotations (QuotationController)
-GET /quotations/{id}  # module 08 quotations (QuotationController)
-GET /quotations/{id}/pdf  # module 08 quotations (QuotationController)
-POST /quotations  # module 08 quotations (QuotationController)
-POST /quotations/{id}/send-whatsapp  # module 08 quotations (QuotationController)
-PUT /quotations/{id}  # module 08 quotations (QuotationController)
 # --- module 09 deliveries
 DELETE /settings/delivery-failure-reasons/{id}  # module 09 deliveries (DeliverySettingsController)
 GET /deliveries  # module 09 deliveries (DeliveryController)

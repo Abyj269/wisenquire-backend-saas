@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class QuotationService {
     private final TenantAccess access;
+    private final CompanyClock companyClock;
     private final DocumentNumberService numbers;
 
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
@@ -121,14 +122,28 @@ public class QuotationService {
         pageable = com.leads.util.InputRules.page(pageable, "createdAt", "updatedAt", "quotationNumber", "grandTotal", "id");
         if (leadId != null) access.record(Lead.class, leadId);
         List<Long> permittedBranches = access.branchIds();
+        // D14 (module 08 P1): an OWN user lists the quotations they may open: their lead's (or an
+        // unassigned lead's with include_unassigned) or ones they created. Same rule as record(Quotation).
+        final Long ownMe = access.ownerFilter();
+        final boolean ownUnassigned = ownMe != null && access.ownIncludesUnassigned();
+        // D15 (module 08 P1): "from"/"to" are company-local days.
+        final Company zoneCompany = companyId != null ? access.company(companyId) : null;
+        final java.time.LocalDateTime fromBound = fromDate == null ? null : companyClock.range(zoneCompany, fromDate, fromDate).start();
+        final java.time.LocalDateTime toBound = toDate == null ? null : companyClock.range(zoneCompany, toDate, toDate).endExclusive();
         Specification<Quotation> spec = (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
             if (permittedBranches != null) predicates.add(root.get("lead").get("branch").get("id").in(permittedBranches));
+            if (ownMe != null) {
+                var assignee = root.join("lead").join("assignedTo", jakarta.persistence.criteria.JoinType.LEFT);
+                var creator = root.join("createdBy", jakarta.persistence.criteria.JoinType.LEFT);
+                var mine = cb.or(cb.equal(assignee.get("id"), ownMe), cb.equal(creator.get("id"), ownMe));
+                predicates.add(ownUnassigned ? cb.or(mine, cb.isNull(assignee.get("id"))) : mine);
+            }
             if (companyId != null) predicates.add(cb.equal(root.get("company").get("id"), companyId));
             if (leadId != null) predicates.add(cb.equal(root.get("lead").get("id"), leadId));
             if (status != null) predicates.add(cb.equal(root.get("status"), status));
-            if (fromDate != null) predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromDate.atStartOfDay()));
-            if (toDate != null) predicates.add(cb.lessThan(root.get("createdAt"), toDate.plusDays(1).atStartOfDay()));
+            if (fromBound != null) predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromBound));
+            if (toBound != null) predicates.add(cb.lessThan(root.get("createdAt"), toBound));
             if (search != null && !search.isBlank()) {
                 String pattern = "%" + search.trim().toLowerCase() + "%";
                 predicates.add(cb.or(
@@ -160,6 +175,9 @@ public class QuotationService {
      * already handles the Meta upload + send — no new WhatsApp-side plumbing
      * needed here). Flips status to SENT once it succeeds.
      */
+    // KNOWN VIOLATION of CLAUDE.md hard rule 2 (found in module 08 P1, owner decision: fix in module 12):
+    // this transaction stays open across sendMediaMessage's Meta upload/send, and sendMediaMessage is
+    // itself @Transactional. Module 12 restructures the WhatsApp send path (outbox) and closes both.
     @Transactional(noRollbackFor = com.leads.exception.WhatsAppApiException.class)
     public QuotationDto sendViaWhatsApp(Long id, Long explicitConversationId) {
         Quotation quotation = findOrThrow(id);

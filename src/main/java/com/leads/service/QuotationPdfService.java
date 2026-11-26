@@ -30,6 +30,12 @@ import java.util.stream.Collectors;
 public class QuotationPdfService {
 
     private final TemplateEngine templateEngine;
+    private final CompanyClock companyClock;
+
+    /** D15 (module 08 P1): "Printed at" is the company's local time (was the server clock). */
+    String printedAtText(com.leads.model.entity.Company company) {
+        return DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", java.util.Locale.ENGLISH).format(companyClock.now(company));
+    }
 
     /** @param printedBy the user actually generating this PDF right now (download, or the sender for a WhatsApp send) — stamped on the footer, independent of who originally created the quotation. */
     public byte[] render(Quotation quotation, User printedBy) {
@@ -46,7 +52,7 @@ public class QuotationPdfService {
         context.setVariable("branchAddress", branch.getAddress());
         context.setVariable("branchPhone", branch.getPhone());
         context.setVariable("printedByName", printedBy != null ? printedBy.getFullName() : "System");
-        context.setVariable("printedAt", DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a").format(LocalDateTime.now()));
+        context.setVariable("printedAt", printedAtText(quotation.getCompany()));
         context.setVariable("termsLines", splitLines(quotation.getTermsAndConditions()));
         // Formatted here rather than via Thymeleaf's #temporals in the template —
         // that utility needs the separate thymeleaf-extras-java8time dependency

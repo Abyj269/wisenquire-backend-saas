@@ -34,6 +34,7 @@ public final class Matrix {
         all.addAll(TenantRows.specs());
         all.addAll(LeadSettingsRows.specs());
         all.addAll(ProductRows.specs());
+        all.addAll(QuotationRows.specs());
         return all;
     }
 
