@@ -190,6 +190,16 @@ public class TenantFixture {
         return inTx(() -> persist(DeliveryFailureReason.builder().company(companyRef(s)).reasonText("IT reason " + seq.incrementAndGet()).build()).getId());
     }
 
+    /** Module 14: a fresh WhatsApp holiday of {@code s}'s company, applying to {@code s}'s branch. */
+    public Long freshHoliday(Slot s) {
+        return inTx(() -> {
+            WhatsAppHoliday h = WhatsAppHoliday.builder().company(companyRef(s)).name("IT Holiday " + seq.incrementAndGet())
+                    .startDate(java.time.LocalDate.of(2030, 1, 1)).endDate(java.time.LocalDate.of(2030, 1, 2)).build();
+            h.getBranches().add(em.getReference(Branch.class, branchId.get(s)));
+            return persist(h).getId();
+        });
+    }
+
     /** Module 12: gives the slot's WhatsApp connection an app secret, so a test can sign a webhook with it. */
     public void setAppSecret(Slot s, String secret) {
         inTx(() -> { em.find(WhatsAppConfiguration.class, configId.get(s)).setAppSecret(secret); return null; });

@@ -49,6 +49,9 @@ spring:
     out-of-order: true
 
 app:
+  # Module 14 P1 (D15, R20): refuse to start unless the JVM timezone is Asia/Dubai.
+  # Instant rollback without a rebuild: APP_SERVER_ZONE_GUARD=warn.
+  server-zone-guard: ${APP_SERVER_ZONE_GUARD:fail}
   security:
     allowed-origins: ${ALLOWED_ORIGINS}
     jwt:

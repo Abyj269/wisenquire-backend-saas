@@ -196,7 +196,7 @@ public class WhatsAppScheduleService {
     @Transactional(readOnly = true)
     public Optional<ResolvedAutoReply> resolveAutoReply(Branch branch) {
         Company company = branch.getCompany();
-        LocalDateTime companyNow = nowInCompanyZone(company);
+        LocalDateTime companyNow = companyClock.now(company);
         LocalDate today = companyNow.toLocalDate();
 
         List<WhatsAppHoliday> activeHolidays = holidayRepo.findActiveForBranch(branch.getId(), today);
@@ -240,7 +240,7 @@ public class WhatsAppScheduleService {
      */
     @Transactional(readOnly = true)
     public boolean isWithinWorkingHours(Branch branch) {
-        LocalDateTime companyNow = nowInCompanyZone(branch.getCompany());
+        LocalDateTime companyNow = companyClock.now(branch.getCompany());
         LocalDate today = companyNow.toLocalDate();
         if (!holidayRepo.findActiveForBranch(branch.getId(), today).isEmpty()) return false;
         Optional<BranchWorkingHours> hours = workingHoursRepo.findByBranchIdAndDayOfWeek(branch.getId(), today.getDayOfWeek().getValue());
@@ -250,9 +250,24 @@ public class WhatsAppScheduleService {
     }
 
     /**
+     * Module 14 P1 (v3.1): {@code lastAutoReplyAt} is stored in server wall-clock time like every other
+     * column; "already auto-replied today" means the same company-local day. A value written before this
+     * change was company-local: for a non-Dubai company it can at most skip one auto-reply on the deploy day.
+     */
+    public boolean repliedToday(Company company, LocalDateTime lastAutoReplyAtServer) {
+        return lastAutoReplyAtServer != null
+                && companyClock.fromServer(company, lastAutoReplyAtServer).toLocalDate().isEqual(companyClock.today(company));
+    }
+
+    /** The value to store in {@code lastAutoReplyAt} for a reply sent now (server wall-clock). */
+    public LocalDateTime autoReplyStampNow() {
+        return companyClock.serverNow();
+    }
+
+    /**
      * True current moment in the company's own timezone. Delegates to {@link CompanyClock#now}.
-     * @deprecated call {@code CompanyClock.now(company)} directly; the remaining callers
-     * (AiUsageGuardService, WhatsAppCloudService) move in their own modules (18, 12).
+     * @deprecated call {@code CompanyClock.now(company)} directly; the remaining caller
+     * (AiUsageGuardService) moves in module 18.
      */
     @Deprecated
     public LocalDateTime nowInCompanyZone(Company company) {

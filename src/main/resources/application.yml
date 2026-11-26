@@ -52,6 +52,9 @@ spring:
 
 # App Security & JWT Settings
 app:
+  # Module 14 P1 (D15, R20): the JVM must run in CompanyClock.SERVER_ZONE (Asia/Dubai).
+  # fail = refuse to start, warn = log an error, off = skip. application-prod.yml sets fail.
+  server-zone-guard: ${APP_SERVER_ZONE_GUARD:warn}
   mail:
     # Some providers (ZeptoMail, SendGrid, etc.) authenticate with an API-key
     # style username (e.g. "emailapikey") that isn't a valid email address in

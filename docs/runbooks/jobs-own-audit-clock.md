@@ -55,3 +55,15 @@ SELECT * FROM audit_log WHERE outcome = 'DENIED' AND created_at > NOW() - INTERV
 
 ## CompanyClock (D15)
 The only API for "today", date filters and day buckets in a company's timezone (`service/CompanyClock`). The server wall-clock stays Asia/Dubai. Modules switch their own call sites (D15 table); the architecture report lists the remaining `LocalDate.now()` / `LocalDateTime.now()` / `atStartOfDay()` calls under rule (d).
+
+## Server timezone guard (module 14, D15 / R20)
+- At startup the app logs `Server timezone: <zone> (D15 server zone, guard <mode>)` and compares the JVM zone with Asia/Dubai.
+- Property `app.server-zone-guard` (env `APP_SERVER_ZONE_GUARD`): `fail` refuses to start, `warn` logs an ERROR, `off` skips the check.
+  - Default `warn`; the `prod` profile sets `fail`.
+- **Before deploying to a prod-profile server, check its zone:** `timedatectl` (expect `Asia/Dubai`) and the JVM options (`-Duser.timezone=Asia/Dubai`, e.g. in Tomcat `setenv.sh`). The container image already sets both.
+- **If the app refuses to start** with "Server timezone is … but must be Asia/Dubai": fix the zone (`TZ=Asia/Dubai`, `-Duser.timezone=Asia/Dubai`) and restart. As a stop-gap only, set `APP_SERVER_ZONE_GUARD=warn` and restart (no rebuild); stored times will be shifted until the zone is fixed.
+
+## Auto-reply once per day (module 14)
+- `whatsapp_conversations.last_auto_reply_at` is server wall-clock (Asia/Dubai) like every other column; "already replied today" uses the company's own day (`WhatsAppScheduleService.repliedToday`).
+- Values written before module 14 were company-local. No backfill: for a non-Dubai company, at most one auto-reply can be skipped on the deploy day.
+

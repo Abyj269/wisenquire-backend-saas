@@ -346,7 +346,7 @@ public class WhatsAppCloudService {
      * Called OUTSIDE the webhook's per-message transaction.
      */
     private void maybeSendAutoReply(Long conversationId, String receivingNumber) {
-        record Plan(WhatsAppConfiguration config, String waId, WhatsAppScheduleService.ResolvedAutoReply reply, LocalDateTime companyNow) { }
+        record Plan(WhatsAppConfiguration config, String waId, WhatsAppScheduleService.ResolvedAutoReply reply) { }
         Long reservedId = null;
         try {
             var readOnly = tx();
@@ -356,11 +356,11 @@ public class WhatsAppCloudService {
                 WhatsAppConfiguration config = configRepo.findByPhoneNumberId(receivingNumber).orElse(null);
                 if (conversation == null || config == null || conversation.getBranch() == null) return null;
                 if (!Boolean.TRUE.equals(config.getIsActive()) || !WhatsAppMessagingPolicy.isOpen(conversation.getLastCustomerMessageEpoch(), java.time.Instant.now())) return null;
-                LocalDateTime companyNow = scheduleService.nowInCompanyZone(conversation.getCompany());
-                if (conversation.getLastAutoReplyAt() != null && conversation.getLastAutoReplyAt().toLocalDate().isEqual(companyNow.toLocalDate())) return null; // already replied today
+                // Module 14 P1: lastAutoReplyAt is server wall-clock; "today" is the company's day.
+                if (scheduleService.repliedToday(conversation.getCompany(), conversation.getLastAutoReplyAt())) return null; // already replied today
                 var resolved = scheduleService.resolveAutoReply(conversation.getBranch());
                 if (resolved.isEmpty() || resolved.get().text() == null || resolved.get().text().isBlank()) return null;
-                return new Plan(config, conversation.getCustomerWaId(), resolved.get(), companyNow);
+                return new Plan(config, conversation.getCustomerWaId(), resolved.get());
             });
             if (plan == null) return;
             var reply = plan.reply();
@@ -379,7 +379,7 @@ public class WhatsAppCloudService {
             });
             if (sent.status() != MessageStatus.ACCEPTED) throw new WhatsAppApiException(sent.error());
             complete(reservedId, sent, conversation -> {
-                conversation.setLastAutoReplyAt(plan.companyNow());
+                conversation.setLastAutoReplyAt(scheduleService.autoReplyStampNow());
                 conversation.setLastMessageText(reply.text());
             });
         } catch (Exception ex) {
