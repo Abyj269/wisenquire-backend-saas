@@ -190,6 +190,15 @@ public class TenantFixture {
         return inTx(() -> persist(DeliveryFailureReason.builder().company(companyRef(s)).reasonText("IT reason " + seq.incrementAndGet()).build()).getId());
     }
 
+    /** Module 11: a fresh WhatsApp connection on branch {@code s} (no conversations use it, so it can be deleted). */
+    public Long freshWhatsAppConfig(Slot s) {
+        return inTx(() -> { int n = seq.incrementAndGet(); return persist(WhatsAppConfiguration.builder()
+                .company(em.getReference(Company.class, companyId.get(s.company())))
+                .branch(em.getReference(Branch.class, branchId.get(s)))
+                .phoneNumberId("it-fresh-pnid-" + n).wabaId("it-fresh-waba-" + n)
+                .accessToken("it-not-a-real-token").verifyToken("it-verify-fresh-" + n).build()).getId(); });
+    }
+
     // ---- module 03: fresh tenant-admin records for rows that write ------------------------------
 
     /** A company in {@code s}'s organization (with the app's default lead settings not needed by tests). */

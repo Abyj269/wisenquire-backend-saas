@@ -25,6 +25,7 @@ public class WhatsAppConfigService {
     private final WhatsAppConfigurationRepository configRepo;
     private final BranchRepository branchRepo;
     private final WhatsAppGraphApiClient graphApiClient;
+    private final org.springframework.transaction.PlatformTransactionManager txManager;
 
     @Transactional(readOnly = true)
     public List<WhatsAppConfigDto> getConfigsByCompany(Long companyId) {
@@ -93,11 +94,19 @@ public class WhatsAppConfigService {
         configRepo.deleteById(id);
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * Module 11 P1 (CLAUDE.md hard rule 2): the scope check and the load run in a short read-only
+     * transaction that is CLOSED before the Meta call; the call uses the loaded values only
+     * (phone number id, token, app id). Was @Transactional(readOnly) around the HTTP call.
+     */
     public WhatsAppTestConnectionResult testConnection(Long id) {
-        access.record(com.leads.model.entity.WhatsAppConfiguration.class, id);
-        WhatsAppConfiguration config = configRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("WhatsApp configuration not found: " + id));
+        var readOnly = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        readOnly.setReadOnly(true);
+        WhatsAppConfiguration config = readOnly.execute(st -> {
+            access.record(com.leads.model.entity.WhatsAppConfiguration.class, id);
+            return configRepo.findById(id)
+                    .orElseThrow(() -> new IllegalArgumentException("WhatsApp configuration not found: " + id));
+        });
         try {
             JsonNode info = graphApiClient.getPhoneNumberInfo(config);
             return WhatsAppTestConnectionResult.builder()
@@ -116,6 +125,7 @@ public class WhatsAppConfigService {
     }
 
     private String textOrNull(JsonNode node, String field) {
+        if (node == null) return null; // an empty answer from Meta (or a stub) is not a server error
         JsonNode f = node.get(field);
         return f != null ? f.asText() : null;
     }

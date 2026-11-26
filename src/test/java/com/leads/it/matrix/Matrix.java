@@ -37,6 +37,7 @@ public final class Matrix {
         all.addAll(QuotationRows.specs());
         all.addAll(DeliveryRows.specs());
         all.addAll(DeliverySettingsRows.specs());
+        all.addAll(WhatsAppConfigRows.specs());
         return all;
     }
 
