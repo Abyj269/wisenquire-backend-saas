@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ReportsService {
     private final TenantAccess access;
+    private final CompanyClock companyClock;
 
     /** Minutes considered "on time" for a first response to a new lead — fixed v1 benchmark. */
     private static final int SLA_TARGET_MINUTES = 60;
@@ -56,16 +57,26 @@ public class ReportsService {
     public CustomerReportDto getCustomerReport(Long companyId, Long branchId, LocalDate fromDate, LocalDate toDate) {
         access.scope(companyId, branchId);
         if (branchId == null) access.companyWide(companyId);
+        denyOwn();
+        Company company = access.company(companyId);
         CompanyLeadSettingsDto settings = leadSettingsService.getCompanyLeadSettings(companyId);
         int lostAfterDays = settings.getCustomerLostAfterDays() != null ? settings.getCustomerLostAfterDays() : 60;
 
+        // Module 10 P1: a branch's customers are those with a lead in that branch (same as the customer
+        // list), not those whose home branch it is. Numbers can change (release note).
         List<Customer> customers = branchId != null
-                ? customerRepo.findByCompanyIdAndHomeBranchId(companyId, branchId)
+                ? customerRepo.findAll((root, query, cb) -> {
+                    var sub = query.subquery(Long.class);
+                    var lead = sub.from(Lead.class);
+                    sub.select(lead.get("id")).where(cb.equal(lead.get("customer"), root), cb.equal(lead.get("branch").get("id"), branchId));
+                    return cb.and(cb.equal(root.get("company").get("id"), companyId), cb.exists(sub));
+                })
                 : customerRepo.findByCompanyId(companyId);
 
-        LocalDateTime rangeStart = fromDate != null ? fromDate.atStartOfDay() : null;
-        LocalDateTime rangeEndExclusive = toDate != null ? toDate.plusDays(1).atStartOfDay() : null;
-        LocalDateTime now = LocalDateTime.now();
+        // D15 (module 10 P1): company-local days as server wall-clock bounds; "now" from the app clock.
+        LocalDateTime rangeStart = fromDate != null ? dayStart(company, fromDate) : null;
+        LocalDateTime rangeEndExclusive = toDate != null ? dayStart(company, toDate.plusDays(1)) : null;
+        LocalDateTime now = companyClock.serverNow();
 
         List<CustomerSummaryDto> acquired = customers.stream()
                 .filter(c -> c.getFirstLeadAt() != null && inRange(c.getFirstLeadAt(), rangeStart, rangeEndExclusive))
@@ -95,7 +106,7 @@ public class ReportsService {
                 .regained(regained)
                 .lostCount(lost.size())
                 .lost(lost)
-                .trend(buildCustomerTrend(acquired, regained, lost, fromDate, toDate))
+                .trend(buildCustomerTrend(company, acquired, regained, lost, fromDate, toDate))
                 .build();
     }
 
@@ -130,33 +141,34 @@ public class ReportsService {
     // (Day/Week/WTD/MTD and similar custom ranges) get daily points so the
     // line chart actually has a trend to draw, longer ranges fall back to
     // weekly then monthly so the chart doesn't end up with hundreds of points.
-    private List<TrendPointDto> buildCustomerTrend(List<CustomerSummaryDto> acquired, List<CustomerSummaryDto> regained,
+    private List<TrendPointDto> buildCustomerTrend(Company company, List<CustomerSummaryDto> acquired, List<CustomerSummaryDto> regained,
                                                      List<CustomerSummaryDto> lost, LocalDate fromDate, LocalDate toDate) {
         if (fromDate == null || toDate == null || toDate.isBefore(fromDate)) return List.of();
         // A single-day range (the "Day" filter, or a custom range collapsed to
         // one day) has nothing to bucket by day — go hourly instead so the
         // chart still has a trend to draw.
         if (fromDate.isEqual(toDate)) {
-            return buildHourlyTrendBuckets(acquired, regained, lost, fromDate);
+            return buildHourlyTrendBuckets(company, acquired, regained, lost, fromDate);
         }
         long spanDays = ChronoUnit.DAYS.between(fromDate, toDate) + 1;
         if (spanDays <= DAILY_TREND_MAX_DAYS) {
-            return buildTrendBuckets(acquired, regained, lost, fromDate, toDate, 1, ChronoUnit.DAYS, DateTimeFormatter.ofPattern("d MMM"));
+            return buildTrendBuckets(company, acquired, regained, lost, fromDate, toDate, 1, ChronoUnit.DAYS, DateTimeFormatter.ofPattern("d MMM"));
         }
         if (spanDays <= WEEKLY_TREND_MAX_DAYS) {
-            return buildTrendBuckets(acquired, regained, lost, fromDate, toDate, 7, ChronoUnit.DAYS, DateTimeFormatter.ofPattern("d MMM"));
+            return buildTrendBuckets(company, acquired, regained, lost, fromDate, toDate, 7, ChronoUnit.DAYS, DateTimeFormatter.ofPattern("d MMM"));
         }
-        return buildTrendBuckets(acquired, regained, lost, fromDate.withDayOfMonth(1), toDate.withDayOfMonth(1), 1, ChronoUnit.MONTHS, DateTimeFormatter.ofPattern("MMM yyyy"));
+        return buildTrendBuckets(company, acquired, regained, lost, fromDate.withDayOfMonth(1), toDate.withDayOfMonth(1), 1, ChronoUnit.MONTHS, DateTimeFormatter.ofPattern("MMM yyyy"));
     }
 
-    private List<TrendPointDto> buildTrendBuckets(List<CustomerSummaryDto> acquired, List<CustomerSummaryDto> regained,
+    /** D15: each bucket is a company-local day/week/month, converted to server wall-clock bounds. */
+    List<TrendPointDto> buildTrendBuckets(Company company, List<CustomerSummaryDto> acquired, List<CustomerSummaryDto> regained,
             List<CustomerSummaryDto> lost, LocalDate start, LocalDate end, int stepAmount, ChronoUnit stepUnit, DateTimeFormatter labelFmt) {
         List<TrendPointDto> buckets = new ArrayList<>();
         LocalDate cursor = start;
         int guard = 0;
         while (!cursor.isAfter(end) && guard < 400) {
-            LocalDateTime bucketStart = cursor.atStartOfDay();
-            LocalDateTime bucketEndExclusive = cursor.plus(stepAmount, stepUnit).atStartOfDay();
+            LocalDateTime bucketStart = dayStart(company, cursor);
+            LocalDateTime bucketEndExclusive = dayStart(company, cursor.plus(stepAmount, stepUnit));
             buckets.add(TrendPointDto.builder()
                     .label(cursor.format(labelFmt))
                     .acquired(acquired.stream().filter(x -> inRange(x.getReferenceDate(), bucketStart, bucketEndExclusive)).count())
@@ -169,24 +181,39 @@ public class ReportsService {
         return buckets;
     }
 
-    private List<TrendPointDto> buildHourlyTrendBuckets(List<CustomerSummaryDto> acquired, List<CustomerSummaryDto> regained,
+    /** D15: the company-local hours of {@code day} (labels in company time), compared as server wall-clock. */
+    List<TrendPointDto> buildHourlyTrendBuckets(Company company, List<CustomerSummaryDto> acquired, List<CustomerSummaryDto> regained,
             List<CustomerSummaryDto> lost, LocalDate day) {
-        DateTimeFormatter labelFmt = DateTimeFormatter.ofPattern("h a");
+        DateTimeFormatter labelFmt = DateTimeFormatter.ofPattern("h a", java.util.Locale.ENGLISH);
         List<TrendPointDto> buckets = new ArrayList<>();
-        LocalDateTime cursor = day.atStartOfDay();
+        LocalDateTime cursor = day.atStartOfDay();          // company-local
         LocalDateTime dayEndExclusive = day.plusDays(1).atStartOfDay();
         while (cursor.isBefore(dayEndExclusive)) {
-            final LocalDateTime bucketStart = cursor;
-            final LocalDateTime bucketEndExclusive = cursor.plusHours(1);
+            final LocalDateTime bucketStart = companyClock.toServer(company, cursor);
+            final LocalDateTime bucketEndExclusive = companyClock.toServer(company, cursor.plusHours(1));
             buckets.add(TrendPointDto.builder()
-                    .label(bucketStart.format(labelFmt))
+                    .label(cursor.format(labelFmt))
                     .acquired(acquired.stream().filter(x -> inRange(x.getReferenceDate(), bucketStart, bucketEndExclusive)).count())
                     .regained(regained.stream().filter(x -> inRange(x.getReferenceDate(), bucketStart, bucketEndExclusive)).count())
                     .lost(lost.stream().filter(x -> inRange(x.getReferenceDate(), bucketStart, bucketEndExclusive)).count())
                     .build());
-            cursor = bucketEndExclusive;
+            cursor = cursor.plusHours(1);
         }
         return buckets;
+    }
+
+    /** D15 (module 10 P1): the start of a company-local day as server wall-clock (what stored times use). */
+    private LocalDateTime dayStart(Company company, LocalDate day) {
+        return companyClock.toServer(company, day.atStartOfDay());
+    }
+
+    /**
+     * D14 (module 10 P1): customers, lead sources and branches are company aggregates, not personal
+     * numbers: OWN users get 403 (staff performance, response time and revenue forecast are filtered
+     * to their own leads through LeadService.findLeadsForReport instead).
+     */
+    private void denyOwn() {
+        if (access.ownerFilter() != null) throw new org.springframework.security.access.AccessDeniedException("Company reports are not available for your role.");
     }
 
     private CustomerSummaryDto toSummary(Customer c, LocalDateTime referenceDate, Integer gapDays) {
@@ -212,8 +239,9 @@ public class ReportsService {
         Map<Long, List<Lead>> byUser = assignedLeads.stream()
                 .collect(Collectors.groupingBy(l -> l.getAssignedTo().getId()));
 
-        LocalDateTime fromDt = fromDate != null ? fromDate.atStartOfDay() : null;
-        LocalDateTime toDt = toDate != null ? toDate.plusDays(1).atStartOfDay() : null;
+        Company zone = access.company(companyId);
+        LocalDateTime fromDt = fromDate != null ? dayStart(zone, fromDate) : null;
+        LocalDateTime toDt = toDate != null ? dayStart(zone, toDate.plusDays(1)) : null;
         Map<Long, Long> messageCounts = whatsAppMessageRepo.countOutboundByUser(companyId, branchId, fromDt, toDt).stream()
                 .collect(Collectors.toMap(row -> (Long) row[0], row -> (Long) row[1]));
 
@@ -311,6 +339,7 @@ public class ReportsService {
     public List<LeadSourceRoiDto> getLeadSourceRoiReport(Long companyId, Long branchId, LocalDate fromDate, LocalDate toDate) {
         access.scope(companyId, branchId);
         if (branchId == null) access.companyWide(companyId);
+        denyOwn();
         List<Lead> leads = leadService.findLeadsForReport(companyId, branchId, fromDate, toDate);
         Map<String, List<Lead>> bySource = leads.stream().collect(Collectors.groupingBy(l -> l.getSource().getSourceCode()));
 
@@ -339,11 +368,13 @@ public class ReportsService {
     @Transactional(readOnly = true)
     public List<BranchComparisonDto> getBranchComparisonReport(Long companyId, LocalDate fromDate, LocalDate toDate) {
         access.companyWide(companyId);
+        denyOwn();
+        Company zone = access.company(companyId);
         List<Lead> leads = leadService.findLeadsForReport(companyId, null, fromDate, toDate);
         Map<Long, List<Lead>> byBranch = leads.stream().collect(Collectors.groupingBy(l -> l.getBranch().getId()));
 
-        LocalDateTime rangeStart = fromDate != null ? fromDate.atStartOfDay() : null;
-        LocalDateTime rangeEndExclusive = toDate != null ? toDate.plusDays(1).atStartOfDay() : null;
+        LocalDateTime rangeStart = fromDate != null ? dayStart(zone, fromDate) : null;
+        LocalDateTime rangeEndExclusive = toDate != null ? dayStart(zone, toDate.plusDays(1)) : null;
         Map<Long, Long> newCustomersByBranch = customerRepo.findByCompanyId(companyId).stream()
                 .filter(c -> c.getHomeBranch() != null && c.getFirstLeadAt() != null && inRange(c.getFirstLeadAt(), rangeStart, rangeEndExclusive))
                 .collect(Collectors.groupingBy(c -> c.getHomeBranch().getId(), Collectors.counting()));
