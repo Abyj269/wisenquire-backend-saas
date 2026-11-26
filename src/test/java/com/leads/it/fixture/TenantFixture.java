@@ -24,7 +24,7 @@ import java.util.function.Supplier;
 @TestComponent
 public class TenantFixture {
 
-    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS", "PRODUCT_CATALOG"};
+    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS", "PRODUCT_CATALOG", "WHATSAPP_TEMPLATES"};
     /** Tenant-admin rights (module 03): managers have them; agents do not, like the real "Agent" template. */
     private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT"};
 

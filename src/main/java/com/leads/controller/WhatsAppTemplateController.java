@@ -15,7 +15,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -66,13 +65,13 @@ public class WhatsAppTemplateController {
 
     @GetMapping("/usage")
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('WHATSAPP_TEMPLATES:VIEW')")
-    @Operation(summary = "Local per-template send counts for a connected number, optionally scoped to a date range (yyyy-MM-dd). Every template is still listed by GET /whatsapp/templates regardless of this range — it only affects the counts here.")
+    @Operation(summary = "Local per-template send counts for a connected number, optionally scoped to a date range (yyyy-MM-dd, inclusive local days in the number's company timezone). Every template is still listed by GET /whatsapp/templates regardless of this range — it only affects the counts here.")
     public ResponseEntity<List<WhatsAppTemplateUsageDto>> usage(
             @RequestParam Long configId,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to) {
-        LocalDateTime fromDate = from != null && !from.isBlank() ? LocalDate.parse(from).atStartOfDay() : null;
-        LocalDateTime toDate = to != null && !to.isBlank() ? LocalDate.parse(to).plusDays(1).atStartOfDay() : null;
-        return ResponseEntity.ok(templateService.getUsage(configId, fromDate, toDate));
+        LocalDate fromDay = from != null && !from.isBlank() ? LocalDate.parse(from) : null;
+        LocalDate toDay = to != null && !to.isBlank() ? LocalDate.parse(to) : null;
+        return ResponseEntity.ok(templateService.getUsage(configId, fromDay, toDay));
     }
 }

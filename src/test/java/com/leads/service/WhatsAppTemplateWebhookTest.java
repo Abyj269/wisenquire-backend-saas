@@ -30,8 +30,22 @@ class WhatsAppTemplateWebhookTest {
         assertThrows(AccessDeniedException.class, () -> verifier.verify(unknown, signature(unknown, "test-secret")));
         verify(configs, never()).findByPhoneNumberId(anyString());
     }
+    static WhatsAppConfigurationRepository registered(String waba) {
+        var configs = mock(WhatsAppConfigurationRepository.class);
+        when(configs.findByWabaIdAndIsActiveTrue(waba)).thenReturn(List.of(WhatsAppConfiguration.builder().isActive(true).build()));
+        return configs;
+    }
+    /** Module 13 P1: a template event for an account with no active number is not stored. */
+    @Test void anEventForAnUnregisteredAccountIsIgnored() throws Exception {
+        var jdbc = mock(JdbcTemplate.class); var service = new WhatsAppTemplateEventService(jdbc, mapper, registered("123"));
+        String both = event.replace("]}]}", "]},{\"id\":\"999\",\"time\":1789000000,\"changes\":[{\"field\":\"template_category_update\",\"value\":{\"message_template_id\":555,\"new_category\":\"MARKETING\"}}]}]}");
+        service.recordVerified(mapper.readTree(both));
+        var calls = mockingDetails(jdbc).getInvocations().stream().toList();
+        assertEquals(1, calls.size(), "only the registered account's event is stored");
+        assertEquals("123", calls.get(0).getArgument(1, String.class));
+    }
     @Test void repeatedEventsUseSameDeduplicationKeyAndRetainCategoryEvidence() throws Exception {
-        var jdbc = mock(JdbcTemplate.class); var service = new WhatsAppTemplateEventService(jdbc, mapper);
+        var jdbc = mock(JdbcTemplate.class); var service = new WhatsAppTemplateEventService(jdbc, mapper, registered("123"));
         var payload = mapper.readTree(event); service.recordVerified(payload); service.recordVerified(payload);
         var calls = mockingDetails(jdbc).getInvocations().stream().toList();
         assertEquals(2, calls.size());
@@ -40,7 +54,7 @@ class WhatsAppTemplateWebhookTest {
         assertTrue(Arrays.toString(calls.get(0).getArguments()).contains("previous_category"));
     }
     @Test void scheduledCategoryEvidenceIsRetainedWithoutApplyingItAsCurrent() throws Exception {
-        var jdbc = mock(JdbcTemplate.class); var service = new WhatsAppTemplateEventService(jdbc, mapper);
+        var jdbc = mock(JdbcTemplate.class); var service = new WhatsAppTemplateEventService(jdbc, mapper, registered("123"));
         String scheduled = event.replace("\"previous_category\":\"UTILITY\",\"new_category\":\"MARKETING\"", "\"new_category\":\"UTILITY\",\"correct_category\":\"MARKETING\",\"category_update_timestamp\":1789086400");
         service.recordVerified(mapper.readTree(scheduled));
         var call = mockingDetails(jdbc).getInvocations().iterator().next();

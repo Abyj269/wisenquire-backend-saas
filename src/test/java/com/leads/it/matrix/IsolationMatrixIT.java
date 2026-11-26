@@ -41,6 +41,10 @@ class IsolationMatrixIT extends AbstractIntegrationTest {
 
     static Stream<Row> rows() { return Matrix.rows().stream(); }
 
+    /** Module 13: default Meta answers for the template rows (the Graph @MockBean is reset after each row). */
+    @org.junit.jupiter.api.BeforeEach
+    void stubGraph() { WhatsAppTemplateRows.stubGraph(graphApi); }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
     void row(Row row) throws Exception {

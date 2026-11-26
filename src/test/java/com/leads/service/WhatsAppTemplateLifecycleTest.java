@@ -29,7 +29,7 @@ class WhatsAppTemplateLifecycleTest {
             assertEquals("customer_name", payload.path("components").get(0).path("example").path("body_text_named_params").get(0).path("param_name").asText());
             return mapper.readTree("{\"id\":\"123\",\"status\":\"PENDING\",\"category\":\"MARKETING\"}");
         });
-        var service = new WhatsAppTemplateService(mock(TenantAccess.class), configs, mock(WhatsAppMessageRepository.class), graph, mock(WhatsAppTemplateEventService.class));
+        var service = new WhatsAppTemplateService(mock(TenantAccess.class), mock(CompanyClock.class), configs, mock(WhatsAppMessageRepository.class), graph, mock(WhatsAppTemplateEventService.class));
         var request = WhatsAppTemplateCreateRequest.builder().configId(1L).name("order_update").category("UTILITY").language("en_US")
             .parameterFormat("NAMED").bodyText("Hello {{customer_name}}, your order is ready.").bodyExampleValues(List.of("Alex")).build();
         assertEquals("MARKETING", service.createTemplate(request).getCategory());
@@ -78,7 +78,7 @@ class WhatsAppTemplateLifecycleTest {
         var graph = mock(WhatsAppGraphApiClient.class); var configs = mock(WhatsAppConfigurationRepository.class);
         var config = WhatsAppConfiguration.builder().id(1L).build(); when(configs.findById(1L)).thenReturn(Optional.of(config));
         when(graph.requireTemplate(config, "foreign")).thenThrow(new com.leads.exception.WhatsAppApiException("Template does not belong to account"));
-        var service = new WhatsAppTemplateService(mock(TenantAccess.class), configs, mock(WhatsAppMessageRepository.class), graph, mock(WhatsAppTemplateEventService.class));
+        var service = new WhatsAppTemplateService(mock(TenantAccess.class), mock(CompanyClock.class), configs, mock(WhatsAppMessageRepository.class), graph, mock(WhatsAppTemplateEventService.class));
         assertThrows(com.leads.exception.WhatsAppApiException.class, () -> service.updateTemplate("foreign", WhatsAppTemplateCreateRequest.builder().configId(1L).build()));
         verify(graph, never()).updateTemplate(any(), anyString(), anyMap());
     }

@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,14 +38,16 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class WhatsAppTemplateService {
+    // Module 13 P1 (CLAUDE.md hard rule 2): the Graph-calling methods have no transaction; the
+    // config check and lookup run first in their own short repository transactions.
     private final TenantAccess access;
+    private final CompanyClock companyClock;
 
     private final WhatsAppConfigurationRepository configRepo;
     private final WhatsAppMessageRepository messageRepo;
     private final WhatsAppGraphApiClient graphApiClient;
     private final WhatsAppTemplateEventService templateEvents;
 
-    @Transactional(readOnly = true)
     public List<WhatsAppTemplateDto> listTemplates(Long configId) {
         WhatsAppConfiguration config = resolveConfig(configId);
         var events = templateEvents.latestCategoryEvents(config.getWabaId());
@@ -53,7 +56,6 @@ public class WhatsAppTemplateService {
                 .collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true)
     public WhatsAppTemplateDto createTemplate(WhatsAppTemplateCreateRequest req) {
         WhatsAppConfiguration config = resolveConfig(req.getConfigId());
         Map<String, Object> payload = buildTemplatePayload(req);
@@ -74,7 +76,6 @@ public class WhatsAppTemplateService {
      * same component-building logic as {@link #createTemplate} but wraps it
      * in the narrower payload shape the edit endpoint expects.
      */
-    @Transactional(readOnly = true)
     public WhatsAppTemplateDto updateTemplate(String templateId, WhatsAppTemplateCreateRequest req) {
         WhatsAppConfiguration config = resolveConfig(req.getConfigId());
         JsonNode existing = graphApiClient.requireTemplate(config, templateId);
@@ -107,7 +108,6 @@ public class WhatsAppTemplateService {
         }
     }
 
-    @Transactional(readOnly = true)
     public void deleteTemplate(Long configId, String templateName) {
         if (templateName == null || !templateName.matches("[a-z0-9_]{1,512}")) throw new IllegalArgumentException("Invalid template name.");
         WhatsAppConfiguration config = resolveConfig(configId);
@@ -115,7 +115,6 @@ public class WhatsAppTemplateService {
     }
 
     /** Uploads sample media for a template Image/Video/Document header (or a Carousel card's header) and returns its header_handle. */
-    @Transactional(readOnly = true)
     public String uploadHeaderMedia(Long configId, byte[] bytes, String mimeType, String filename) {
         WhatsAppConfiguration config = resolveConfig(configId);
         long limit = switch (java.util.Objects.toString(mimeType, "")) {
@@ -129,10 +128,16 @@ public class WhatsAppTemplateService {
         return graphApiClient.uploadSessionFile(config, uploadSessionId, bytes);
     }
 
-    /** Local per-template send counts for the given date range (both bounds optional — null means unbounded). */
+    /**
+     * Local per-template send counts for the given date range (both bounds optional — null means unbounded).
+     * D15: the dates are local days of the number's company (CompanyClock), not server days.
+     */
     @Transactional(readOnly = true)
-    public List<WhatsAppTemplateUsageDto> getUsage(Long configId, LocalDateTime from, LocalDateTime to) {
+    public List<WhatsAppTemplateUsageDto> getUsage(Long configId, LocalDate fromDay, LocalDate toDay) {
         WhatsAppConfiguration config = resolveConfig(configId);
+        LocalDateTime from = fromDay == null ? null : companyClock.range(config.getCompany(), fromDay, fromDay).start();
+        LocalDateTime to = toDay == null ? null : companyClock.range(config.getCompany(), toDay, toDay).endExclusive();
+        // countTemplateUsage has no tenant parameter: it is only called here, after resolveConfig() checked the config.
         List<Object[]> rows = messageRepo.countTemplateUsage(config.getPhoneNumberId(), from, to);
 
         Map<String, WhatsAppTemplateUsageDto> byTemplate = new LinkedHashMap<>();

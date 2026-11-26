@@ -16,6 +16,7 @@ import java.security.MessageDigest;
 public class WhatsAppTemplateEventService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final com.leads.repository.WhatsAppConfigurationRepository configs;
     public static final Set<String> FIELDS = Set.of("template_category_update", "message_template_status_update", "message_template_quality_update");
 
     @Transactional
@@ -30,6 +31,8 @@ public class WhatsAppTemplateEventService {
             // deterministic deduplication; never use these events to override live Graph data.
             if (waba.isBlank() || id.isBlank() || waba.length() > 100 || id.length() > 100 || epoch < 0)
                 throw new IllegalArgumentException("Template event requires WABA and template ID.");
+            // Module 13 P1: the verifier skips a change for an account with no active number; do not store it either.
+            if (configs.findByWabaIdAndIsActiveTrue(waba).isEmpty()) continue;
             String json = value.toString();
             if (json.getBytes(StandardCharsets.UTF_8).length > 60000) throw new IllegalArgumentException("Template event exceeds storage limit.");
             try {
