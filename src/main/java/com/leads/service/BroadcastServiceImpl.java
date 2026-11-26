@@ -47,6 +47,8 @@ public class BroadcastServiceImpl implements BroadcastService {
     private final PlatformTransactionManager transactionManager;
     private final WhatsAppConversationRepository conversationRepo;
     private final WhatsAppMessageRepository messageRepo;
+    private final com.leads.flags.FeatureFlags flags;
+    private final CompanyClock companyClock;
 
     /** Injected by name; bounded queue + TenantTaskDecorator (01 Part B item 6, AsyncConfig). */
     @Qualifier("broadcastExecutor")
@@ -197,7 +199,199 @@ public class BroadcastServiceImpl implements BroadcastService {
         return mapToDto(saved);
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Module 16 P1 (S3-a, CLAUDE.md hard rule 2): chunked send, flag broadcast.chunked_tx
+    // ──────────────────────────────────────────────────────────────
+
+    /** Recipients claimed per chunk. */
+    static final int CHUNK_SIZE = 50;
+
+    /** A SENDING broadcast whose heartbeat is older than this is resumed by the recovery job. */
+    static final java.time.Duration STALL_AFTER = java.time.Duration.ofMinutes(5);
+
+    private record Prepared(WhatsAppConfiguration config, String templateName, String language, String componentsJson) { }
+
+    private record Claimed(Long id, String phone, String name, String wamid) { }
+
+    private TransactionTemplate tx() { return new TransactionTemplate(transactionManager); }
+
+    /**
+     * Entry point for the executor. Flag broadcast.chunked_tx ON for the broadcast's organization:
+     * the chunked path (no transaction during any Meta call, resumable). OFF: the original
+     * single-transaction path, unchanged (kept for one release as the rollback).
+     */
     public void executeBroadcastSend(Long broadcastId) {
+        Long orgId = tx().execute(st -> broadcastRepo.findById(broadcastId)
+                .map(b -> b.getCompany().getOrganization().getId()).orElse(null));
+        if (orgId != null && flags.isOn(com.leads.flags.FeatureFlag.BROADCAST_CHUNKED_TX, orgId)) {
+            executeChunked(broadcastId);
+        } else {
+            executeSingleTransaction(broadcastId);
+        }
+    }
+
+    void executeChunked(Long broadcastId) {
+        log.info("[BROADCAST] Chunked send for ID {}", broadcastId);
+        Prepared prepared = tx().execute(st -> {
+            Broadcast b = broadcastRepo.findByIdWithConfig(broadcastId).orElse(null);
+            if (b == null || b.getDeletedAt() != null || b.getStatus() != BroadcastStatus.SENDING) {
+                log.warn("[BROADCAST] Broadcast ID {} not found, deleted or not SENDING — aborting.", broadcastId);
+                return null;
+            }
+            WhatsAppConfiguration config = b.getWhatsappConfiguration();
+            if (config == null || !Boolean.TRUE.equals(config.getIsActive())) {
+                log.error("[BROADCAST] Broadcast ID {} has no active WhatsApp configuration — marking FAILED", broadcastId);
+                b.setStatus(BroadcastStatus.FAILED);
+                broadcastRepo.save(b);
+                return null;
+            }
+            broadcastRepo.touchHeartbeat(broadcastId, companyClock.serverNow());
+            config.getAccessToken(); // loaded now: the config is used detached for the Meta calls below
+            return new Prepared(config, b.getTemplateName(),
+                    b.getTemplateLanguage() != null ? b.getTemplateLanguage() : "en", b.getTemplateComponentsJson());
+        });
+        if (prepared == null) return;
+
+        String language = prepared.language();
+        try { // Meta call: no transaction open
+            for (var t : graphApiClient.listTemplates(prepared.config())) {
+                if (Objects.equals(prepared.templateName(), t.path("name").asText()) && !t.path("language").asText().isBlank()) {
+                    language = t.path("language").asText();
+                    break;
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[BROADCAST] Could not query Meta live templates (lang verification skipped): {}", ex.getMessage());
+        }
+        List<BroadcastComponentDto> bindings = parseComponentDtos(prepared.componentsJson());
+
+        while (true) {
+            List<Claimed> chunk = claimChunk(broadcastId);
+            if (chunk == null || chunk.isEmpty()) break;
+            for (Claimed r : chunk) sendOne(broadcastId, prepared, language, bindings, r);
+        }
+        finishChunked(broadcastId);
+    }
+
+    /** Claims up to CHUNK_SIZE PENDING recipients (PENDING → SENDING_ITEM) in one short transaction; null = stop. */
+    private List<Claimed> claimChunk(Long broadcastId) {
+        return tx().execute(st -> {
+            Broadcast b = broadcastRepo.findById(broadcastId).orElse(null);
+            if (b == null || b.getDeletedAt() != null || b.getStatus() != BroadcastStatus.SENDING) return null;
+            // FOR UPDATE SKIP LOCKED: two senders (e.g. a slow node and the recovery) never claim the same recipient.
+            List<Long> ids = recipientRepo.lockPendingIds(broadcastId, CHUNK_SIZE);
+            if (ids.isEmpty()) return List.of();
+            recipientRepo.markStatus(ids, BroadcastRecipientStatus.SENDING_ITEM);
+            broadcastRepo.touchHeartbeat(broadcastId, companyClock.serverNow());
+            return recipientRepo.findAllById(ids).stream()
+                    .sorted(Comparator.comparing(BroadcastRecipient::getId))
+                    .map(x -> new Claimed(x.getId(), x.getRecipientPhone(), x.getRecipientName(), x.getWamid()))
+                    .toList();
+        });
+    }
+
+    /** One recipient: the Meta call with no transaction open, then its result in a short transaction. */
+    private void sendOne(Long broadcastId, Prepared prepared, String language, List<BroadcastComponentDto> bindings, Claimed r) {
+        if (r.wamid() != null) { // already sent: never send twice
+            tx().executeWithoutResult(st -> recipientRepo.findByIdAndBroadcastId(r.id(), broadcastId).ifPresent(x -> {
+                x.setStatus(BroadcastRecipientStatus.SENT);
+                recipientRepo.save(x);
+            }));
+            return;
+        }
+        String wamid = null, error = null;
+        String cleanPhone = com.leads.util.PhoneNumberUtil.lastSignificantDigits(r.phone());
+        if (TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("A broadcast send must not run inside a DB transaction (hard rule 2).");
+        try {
+            if (cleanPhone == null || cleanPhone.isBlank()) throw new IllegalArgumentException("Invalid or missing phone number: " + r.phone());
+            BroadcastRecipient view = BroadcastRecipient.builder().recipientPhone(r.phone()).recipientName(r.name()).build();
+            wamid = graphApiClient.sendTemplateMessage(prepared.config(), cleanPhone, prepared.templateName(), language,
+                    resolveComponentsForRecipient(bindings, view));
+        } catch (WhatsAppApiException ex) {
+            error = ex.getMessage();
+        } catch (Exception ex) {
+            error = "Unexpected error: " + ex.getMessage();
+        }
+        final String sentWamid = wamid;
+        final String failure = error == null ? null : (error.length() > 500 ? error.substring(0, 500) : error);
+        tx().executeWithoutResult(st -> {
+            BroadcastRecipient x = recipientRepo.findByIdAndBroadcastId(r.id(), broadcastId).orElse(null);
+            if (x == null) return;
+            if (sentWamid != null) {
+                x.setWamid(sentWamid);
+                x.setStatus(BroadcastRecipientStatus.SENT);
+                x.setSentAt(companyClock.serverNow());
+                broadcastRepo.incrementSentCount(broadcastId);
+            } else {
+                x.setStatus(BroadcastRecipientStatus.FAILED);
+                x.setFailedAt(companyClock.serverNow());
+                x.setErrorMessage(failure);
+                broadcastRepo.incrementFailedCount(broadcastId);
+            }
+            recipientRepo.save(x);
+        });
+        if (sentWamid != null) {
+            try { // separate transaction: a chat-link problem never undoes the recorded send
+                tx().executeWithoutResult(st -> {
+                    Broadcast b = broadcastRepo.findById(broadcastId).orElseThrow();
+                    BroadcastRecipient x = recipientRepo.findByIdAndBroadcastId(r.id(), broadcastId).orElseThrow();
+                    linkBroadcastMessageToChat(prepared.config(), cleanPhone, b, x, sentWamid, language);
+                });
+            } catch (Exception ex) {
+                log.warn("[BROADCAST] Could not link wamid {} to chat: {}", sentWamid, ex.getMessage());
+            }
+        }
+    }
+
+    /** COMPLETED once nothing is PENDING or SENDING_ITEM; otherwise it stays SENDING for the recovery job. */
+    private void finishChunked(Long broadcastId) {
+        tx().executeWithoutResult(st -> {
+            Broadcast b = broadcastRepo.findById(broadcastId).orElse(null);
+            if (b == null || b.getStatus() != BroadcastStatus.SENDING) return;
+            long open = recipientRepo.countByBroadcastIdAndStatus(broadcastId, BroadcastRecipientStatus.PENDING)
+                    + recipientRepo.countByBroadcastIdAndStatus(broadcastId, BroadcastRecipientStatus.SENDING_ITEM);
+            if (open > 0) return;
+            b.setStatus(BroadcastStatus.COMPLETED);
+            b.setCompletedAt(companyClock.serverNow());
+            broadcastRepo.save(b);
+            log.info("[BROADCAST] ✓ Completed broadcast ID {} (chunked)", broadcastId);
+        });
+    }
+
+    /**
+     * Recovery (module 16 P1, P-8): resumes a chunked broadcast whose sender stopped (no heartbeat for
+     * STALL_AFTER). Only broadcasts that have a heartbeat (started on the chunked path) are eligible: an
+     * old single-transaction run rolled its results back, so resuming it would send everyone twice.
+     * The broadcast's @Version makes sure only one node takes it over. Returns whether it was resumed.
+     */
+    @Override
+    public boolean resumeStalled(Long broadcastId) {
+        LocalDateTime cutoff = companyClock.serverNow().minus(STALL_AFTER);
+        Boolean claimed;
+        try {
+            claimed = tx().execute(st -> {
+                Broadcast b = broadcastRepo.findById(broadcastId).orElse(null);
+                if (b == null || b.getDeletedAt() != null || b.getStatus() != BroadcastStatus.SENDING
+                        || b.getLastHeartbeatAt() == null || !b.getLastHeartbeatAt().isBefore(cutoff)) return false;
+                if (!flags.isOn(com.leads.flags.FeatureFlag.BROADCAST_CHUNKED_TX, b.getCompany().getOrganization().getId())) return false;
+                b.setLastHeartbeatAt(companyClock.serverNow());
+                broadcastRepo.saveAndFlush(b); // @Version: a concurrent take-over fails here
+                int reset = recipientRepo.resetUnsentClaims(broadcastId);
+                log.warn("[BROADCAST RECOVERY] Resuming broadcast ID {} ({} claimed-but-unsent recipients back to PENDING)", broadcastId, reset);
+                return true;
+            });
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException ex) {
+            log.info("[BROADCAST RECOVERY] Broadcast ID {} was taken over by another node", broadcastId);
+            return false;
+        }
+        if (!Boolean.TRUE.equals(claimed)) return false;
+        broadcastExecutor.submit(() -> executeBroadcastSend(broadcastId));
+        return true;
+    }
+
+    /** The original single-transaction send (flag broadcast.chunked_tx OFF). Unchanged. */
+    void executeSingleTransaction(Long broadcastId) {
         log.info("[BROADCAST] Starting broadcast send execution for ID {}", broadcastId);
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.executeWithoutResult(status -> {

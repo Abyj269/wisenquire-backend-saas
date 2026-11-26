@@ -20,4 +20,26 @@ public interface BroadcastRecipientRepository extends JpaRepository<BroadcastRec
     List<BroadcastRecipient> findByBroadcastIdAndStatus(Long broadcastId, BroadcastRecipientStatus status);
 
     long countByBroadcastIdAndStatus(Long broadcastId, BroadcastRecipientStatus status);
+
+    /** Module 16 P1: a recipient only through its own broadcast (the chunked sender never loads one by id alone). */
+    Optional<BroadcastRecipient> findByIdAndBroadcastId(Long id, Long broadcastId);
+
+    // ---- module 16 P1: chunked sender and recovery ----
+
+    /** Locks up to {@code limit} PENDING recipients of the broadcast (skipping rows another sender holds). */
+    @org.springframework.data.jpa.repository.Query(value = "SELECT id FROM broadcast_recipients WHERE broadcast_id = :broadcastId "
+            + "AND status = 'PENDING' ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<Long> lockPendingIds(@org.springframework.data.repository.query.Param("broadcastId") Long broadcastId,
+                              @org.springframework.data.repository.query.Param("limit") int limit);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE BroadcastRecipient r SET r.status = :status WHERE r.id IN :ids")
+    int markStatus(@org.springframework.data.repository.query.Param("ids") List<Long> ids,
+                   @org.springframework.data.repository.query.Param("status") BroadcastRecipientStatus status);
+
+    /** Recovery: claimed recipients that were never sent (no wamid) go back to PENDING. */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE BroadcastRecipient r SET r.status = com.leads.model.enums.BroadcastRecipientStatus.PENDING "
+            + "WHERE r.broadcast.id = :broadcastId AND r.status = com.leads.model.enums.BroadcastRecipientStatus.SENDING_ITEM AND r.wamid IS NULL")
+    int resetUnsentClaims(@org.springframework.data.repository.query.Param("broadcastId") Long broadcastId);
 }

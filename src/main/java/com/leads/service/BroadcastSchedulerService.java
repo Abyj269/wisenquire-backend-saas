@@ -54,6 +54,7 @@ public class BroadcastSchedulerService {
 
     private final BroadcastRepository broadcastRepo;
     private final BroadcastService broadcastService;
+    private final CompanyClock companyClock;
 
     @Scheduled(fixedDelayString = "${broadcast.scheduler.check-ms:60000}", initialDelayString = "${broadcast.scheduler.initial-delay-ms:0}")
     @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.BROADCAST_SCHEDULER, lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
@@ -84,6 +85,27 @@ public class BroadcastSchedulerService {
             } catch (Exception ex) {
                 log.error("[BROADCAST SCHEDULER] Failed to trigger broadcast ID {}: {}",
                         broadcastId, ex.getMessage(), ex);
+            }
+        }
+    }
+
+    /**
+     * Module 16 P1 (P-8): resumes chunked broadcasts (flag broadcast.chunked_tx) whose sender stopped,
+     * i.e. still SENDING with no heartbeat for 5 minutes. One node at a time (ShedLock); the broadcast's
+     * @Version guards the take-over itself.
+     */
+    @Scheduled(fixedDelayString = "${broadcast.recovery.check-ms:60000}", initialDelayString = "${broadcast.recovery.initial-delay-ms:60000}")
+    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.BROADCAST_RECOVERY, lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
+    public void recoverStalledBroadcasts() {
+        com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.BROADCAST_RECOVERY);
+        LocalDateTime cutoff = companyClock.serverNow().minus(BroadcastServiceImpl.STALL_AFTER);
+        for (Object[] row : broadcastRepo.findStalledSending(cutoff)) {
+            Long broadcastId = (Long) row[0];
+            Long companyId = (Long) row[1];
+            try {
+                TenantAccess.inCompany(companyId, () -> broadcastService.resumeStalled(broadcastId));
+            } catch (Exception ex) {
+                log.error("[BROADCAST RECOVERY] Could not resume broadcast ID {}: {}", broadcastId, ex.getMessage(), ex);
             }
         }
     }

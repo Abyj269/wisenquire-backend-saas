@@ -110,4 +110,8 @@ public class Broadcast {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    /** Module 16 P1: set per chunk by the chunked sender (server wall-clock); the recovery job resumes a stale one. */
+    @Column(name = "last_heartbeat_at")
+    private LocalDateTime lastHeartbeatAt;
 }

@@ -68,4 +68,19 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long>, Jpa
     @org.springframework.data.jpa.repository.Modifying
     @Query("UPDATE Broadcast b SET b.failedCount = b.failedCount + 1 WHERE b.id = :id")
     void incrementFailedCount(@Param("id") Long id);
+
+    // ---- module 16 P1: chunked sender and recovery ----
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE Broadcast b SET b.sentCount = b.sentCount + 1 WHERE b.id = :id")
+    void incrementSentCount(@Param("id") Long id);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE Broadcast b SET b.lastHeartbeatAt = :now WHERE b.id = :id")
+    void touchHeartbeat(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    /** [broadcastId, companyId] of SENDING broadcasts with a heartbeat older than the cutoff (chunked path only). */
+    @Query("SELECT b.id, b.company.id FROM Broadcast b WHERE b.status = com.leads.model.enums.BroadcastStatus.SENDING "
+            + "AND b.deletedAt IS NULL AND b.lastHeartbeatAt IS NOT NULL AND b.lastHeartbeatAt < :cutoff")
+    List<Object[]> findStalledSending(@Param("cutoff") LocalDateTime cutoff);
 }

@@ -14,4 +14,7 @@ public interface BroadcastService {
     Page<BroadcastRecipientDto> getBroadcastLogs(Long broadcastId, Pageable pageable);
     void deleteBroadcast(Long broadcastId);
     void updateRecipientStatusFromWebhook(String wamid, String status, String errorDetail);
+
+    /** Module 16 P1: resumes a stalled chunked broadcast; false when it is not stalled, not chunked, or another node took it. */
+    boolean resumeStalled(Long broadcastId);
 }

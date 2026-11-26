@@ -69,6 +69,11 @@ class TwoInstancesShedLockIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void broadcastRecoveryRunsOnce() throws Exception { // module 16 P1
+        firesOnce(ScheduledJob.BROADCAST_RECOVERY, BroadcastSchedulerService.class, BroadcastSchedulerService::recoverStalledBroadcasts);
+    }
+
+    @Test
     void receiptReconcileRunsOnce() throws Exception {
         firesOnce(ScheduledJob.WHATSAPP_RECEIPT_RECONCILE, WhatsAppReceiptService.class, WhatsAppReceiptService::reconcile);
     }

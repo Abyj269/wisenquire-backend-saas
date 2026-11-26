@@ -9,6 +9,7 @@ Each scheduled job takes a lock in the `shedlock` table, so with several instanc
 |---|---|---|
 | `ads-sync` | cron `ads.sync.cron` (hourly at :15) | 50 min / 1 min |
 | `broadcast-scheduler` | every `broadcast.scheduler.check-ms` (60 s) | 5 min / 10 s |
+| `broadcast-recovery` (module 16) | every `broadcast.recovery.check-ms` (60 s, first run after 60 s) | 5 min / 10 s |
 | `whatsapp-receipt-reconcile` | every `whatsapp.receipts.reconcile-ms` (2 s) | 1 min / 1 s |
 | `whatsapp-receipt-cleanup` | every `whatsapp.receipts.cleanup-ms` (1 h) | 30 min / 1 min |
 
@@ -66,4 +67,19 @@ The only API for "today", date filters and day buckets in a company's timezone (
 ## Auto-reply once per day (module 14)
 - `whatsapp_conversations.last_auto_reply_at` is server wall-clock (Asia/Dubai) like every other column; "already replied today" uses the company's own day (`WhatsAppScheduleService.repliedToday`).
 - Values written before module 14 were company-local. No backfill: for a non-Dubai company, at most one auto-reply can be skipped on the deploy day.
+
+## Broadcast chunked send and recovery (module 16 P1)
+- Flag `broadcast.chunked_tx` (V52, default OFF), per org. **ON:** a broadcast is sent in chunks of 50 with no DB transaction during any Meta call; each recipient's result is saved right after its own call; `broadcasts.last_heartbeat_at` (V80) is stamped per chunk. **OFF:** the original single-transaction path (kept for one release as the rollback).
+- Recipient status `SENDING_ITEM` = claimed by the sender. It is normal during a run.
+- **Recovery job** `broadcast-recovery`: a broadcast still `SENDING` with a heartbeat older than 5 minutes is resumed; claimed recipients without a wamid go back to `PENDING`, recipients with a wamid are never sent again. Only chunked runs (heartbeat set) are resumed: an old-path run that died rolled its results back, so resuming it would send everyone twice. Log lines: `[BROADCAST RECOVERY] Resuming broadcast ID …`.
+- **Known limit:** if a node dies in the instant after Meta accepted a message and before it was saved, that one recipient can receive it twice (Meta has no idempotency key). P5 (`broadcast.queue_v2`) narrows this further.
+- **Stuck in SENDING on the old path (flag OFF):** unchanged from before; check `broadcast_recipients` and Meta before re-sending by hand.
+
+```sql
+INSERT INTO feature_flag_overrides (flag_key, organization_id, enabled, set_by, reason)
+VALUES ('broadcast.chunked_tx', <org_id>, 1, '<you>', 'module 16 chunked broadcast send');
+DELETE FROM feature_flag_overrides WHERE flag_key = 'broadcast.chunked_tx' AND organization_id = <org_id>;
+-- broadcasts the recovery would pick up now (last_heartbeat_at is server wall-clock, Asia/Dubai; put the current Dubai time minus 5 minutes):
+SELECT id, company_id, last_heartbeat_at FROM broadcasts WHERE status = 'SENDING' AND deleted_at IS NULL AND last_heartbeat_at < '<dubai now - 5 min>';
+```
 
