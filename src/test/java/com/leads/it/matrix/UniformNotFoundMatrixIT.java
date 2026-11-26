@@ -25,12 +25,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 /**
  * D12 / F-9 with flag {@code errors.uniform_not_found} ON for org A: every cross-scope denial row of
  * the matrix becomes 404 NOT_FOUND, and a missing record is 404 too, so the response no longer
- * tells whether a record exists. Two kinds of row stay 403 FORBIDDEN by design:
- * <ul>
- *   <li>X_COMPANY_WIDE: a branch-level user asking for its own company's company-wide data is a
- *       permission refusal (TenantAccess.companyWide), not a hidden record;</li>
- *   <li>POST /broadcasts/{id}/send: denied by the BROADCASTS:SEND permission check (module 16 finding).</li>
- * </ul>
+ * tells whether a record exists. One kind of row stays 403 FORBIDDEN by design: X_COMPANY_WIDE, where a
+ * branch-level user asking for its own company's company-wide data is a permission refusal
+ * (TenantAccess.companyWide), not a hidden record. (Until module 16 part 2, POST /broadcasts/{id}/send was a
+ * second exception: BROADCASTS:SEND could not be granted, so it was refused before the record check.)
  * The flag is switched back off afterwards, so the other ITs (shared context) see the default.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -60,7 +58,7 @@ class UniformNotFoundMatrixIT extends AbstractIntegrationTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
     void crossScopeIsNotFound(Row row) throws Exception {
-        boolean permissionDenial = row.type() == RowType.X_COMPANY_WIDE || row.spec().key.equals("POST /broadcasts/{id}/send");
+        boolean permissionDenial = row.type() == RowType.X_COMPANY_WIDE;
         int expected = permissionDenial ? 403 : 404;
         String expectedCode = permissionDenial ? "FORBIDDEN" : "NOT_FOUND";
         MvcResult result = perform(row.request().build(fixture, row.target(), new EndpointSpec.Probe()), row.org(), row.persona());

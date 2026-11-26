@@ -75,7 +75,8 @@ public class BroadcastServiceImpl implements BroadcastService {
         boolean configMatches = Objects.equals(config.getCompany().getId(), company.getId())
                 && (branch == null || Objects.equals(config.getBranch().getId(), branch.getId()));
         if (!configMatches) {
-            throw new org.springframework.security.access.AccessDeniedException(
+            // Module 16 part 2: a scope denial (403; 404 NOT_FOUND with errors.uniform_not_found, D12).
+            throw new com.leads.exception.ScopeDeniedException(
                     "The selected WhatsApp number does not belong to this company/branch.");
         }
 
