@@ -35,6 +35,8 @@ public enum FeatureFlag {
     AUTH_REFRESH_TOKENS("auth.refresh_tokens", true, "module-02", "2027-06-30"),
     BROADCAST_CHUNKED_TX("broadcast.chunked_tx", false, "module-16", "2027-06-30"),
     BROADCAST_QUEUE_V2("broadcast.queue_v2", false, "module-16", "2027-12-31"),
+    /** Module 18 P1 (S3-b): AI calls run with no DB transaction or usage-counter lock open during the provider call. */
+    AI_SHORT_TRANSACTIONS("ai.short_transactions", false, "module-18", "2027-06-30"),
     WEBHOOK_ASYNC_INBOX("webhook.async_inbox", false, "module-12", "2027-12-31"),
     REPORTS_SQL_V2("reports.sql_v2", false, "module-10", "2027-12-31"),
     SIGNUP_PUBLIC("signup.public", true, "module-20", "2028-06-30"),

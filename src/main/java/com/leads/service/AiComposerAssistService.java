@@ -18,6 +18,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class AiComposerAssistService {
+    private final com.leads.flags.FeatureFlags flags;
     private final AiMeteredCalls meteredCalls;
 
     private static final int MAX_OUTPUT_TOKENS = 400;
@@ -77,6 +78,9 @@ public class AiComposerAssistService {
         for (AiChatMessage m : ctx.getMessages()) estimatedPromptChars += m.getContent().length();
 
         AiUsageGuardService.Reservation reservation = usageGuard.checkAndReserve(branchId, feature, estimatedPromptChars, MAX_OUTPUT_TOKENS);
+        // Module 18 P1 (S3-b): with ai.short_transactions a failed call gives its reservation back (as the other AI features).
+        boolean giveBackOnFailure = flags.isOn(com.leads.flags.FeatureFlag.AI_SHORT_TRANSACTIONS);
+        try {
         AiProviderResolver.Resolved resolved = providerResolver.resolveForBranch(branchId);
 
         // improveDraft folds the draft into the system prompt (not a trailing
@@ -101,6 +105,10 @@ public class AiComposerAssistService {
                 .provider(resolved.getConfig().getProvider().name())
                 .modelName(resolved.getConfig().getModelName())
                 .build();
+        } catch (RuntimeException e) {
+            if (giveBackOnFailure) usageGuard.releaseNow(reservation);
+            throw e;
+        }
     }
 
     private Long requireBranchId(WhatsAppConversation conversation) {

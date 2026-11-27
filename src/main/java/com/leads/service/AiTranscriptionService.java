@@ -45,8 +45,78 @@ public class AiTranscriptionService {
         return transcriptionRepo.findByMessageId(messageId).map(t -> toDto(messageId, t));
     }
 
-    @Transactional
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
+    private final com.leads.flags.FeatureFlags flags;
+
+    private org.springframework.transaction.support.TransactionTemplate tx() {
+        return new org.springframework.transaction.support.TransactionTemplate(transactions);
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate readTx() {
+        var t = tx();
+        t.setReadOnly(true);
+        return t;
+    }
+
+    /** Module 18 P1 (S3-b): flag ai.short_transactions for the caller's organization. */
+    private boolean shortTransactions() {
+        return flags.isOn(com.leads.flags.FeatureFlag.AI_SHORT_TRANSACTIONS);
+    }
+
     public AiTranscriptionDto transcribe(Long messageId) {
+        return shortTransactions() ? transcribeShort(messageId) : tx().execute(st -> transcribeInOneTransaction(messageId));
+    }
+
+    /** Module 18 P1 (S3-b): short transactions; nothing is open during the Meta download or the Whisper call. */
+    private AiTranscriptionDto transcribeShort(Long messageId) {
+        record Prep(AiTranscriptionDto cached, Long branchId, AiProviderConfig config) { }
+        Prep p = readTx().execute(st -> {
+            WhatsAppMessage message = access.record(WhatsAppMessage.class, messageId);
+            Optional<WhatsAppMessageTranscription> existing = transcriptionRepo.findByMessageId(messageId);
+            if (existing.isPresent()) return new Prep(toDto(messageId, existing.get()), null, null);
+            if (!"AUDIO".equals(message.getMessageType())) throw new IllegalArgumentException("Only voice-note (audio) messages can be transcribed.");
+            Branch branch = message.getConversation().getBranch();
+            if (branch == null) throw new IllegalStateException("This conversation has no branch assigned; AI features require a branch.");
+            AiProviderConfig config = providerResolver.resolveForBranch(branch.getId()).getConfig();
+            if (config.getProvider() != AiProviderType.OPENAI) {
+                throw new IllegalStateException("Voice-note transcription is only available when this branch's selected AI "
+                        + "provider is OpenAI. Configure an OpenAI connection in AI Settings to use this feature.");
+            }
+            return new Prep(null, branch.getId(), config);
+        });
+        if (p.cached() != null) return p.cached();
+        AiTranscriptionProvider transcriptionClient = clientFor(p.config().getProvider());
+
+        AiUsageGuardService.Reservation reservation = usageGuard.reserveNow(
+                p.branchId(), AiUsageGuardService.Feature.TRANSCRIPTION, 0, ESTIMATED_TOKENS_PER_MINUTE * 3);
+        String text;
+        try {
+            AiUsageGuardService.requireNoTransaction();
+            WhatsAppMediaService.CachedMedia media = mediaService.resolveWithoutTransaction(messageId);
+            text = meteredCalls.transcribe(transcriptionClient, p.config(), media.data(), media.mimeType(), media.filename());
+        } catch (RuntimeException e) {
+            usageGuard.releaseNow(reservation);
+            throw e;
+        }
+        usageGuard.recordActualNow(reservation, null, null);
+        String provider = p.config().getProvider().name();
+        return tx().execute(st -> {
+            WhatsAppMessage message = access.record(WhatsAppMessage.class, messageId);
+            Optional<WhatsAppMessageTranscription> raced = transcriptionRepo.findByMessageId(messageId);
+            if (raced.isPresent()) return toDto(messageId, raced.get());
+            WhatsAppMessageTranscription transcription = new WhatsAppMessageTranscription();
+            transcription.setMessage(message);
+            transcription.setCompany(message.getConversation().getCompany());
+            transcription.setTranscriptText(text != null ? text.trim() : "");
+            transcription.setProvider(provider);
+            transcription.setModelName("whisper-1");
+            transcription.setGeneratedByUser(access.actor());
+            return toDto(messageId, transcriptionRepo.save(transcription));
+        });
+    }
+
+    /** The original path (flag OFF), unchanged; runs inside the caller's transaction. */
+    private AiTranscriptionDto transcribeInOneTransaction(Long messageId) {
         WhatsAppMessage message = access.record(WhatsAppMessage.class, messageId);
         Optional<WhatsAppMessageTranscription> existing = transcriptionRepo.findByMessageId(messageId);
         if (existing.isPresent()) return toDto(messageId, existing.get());

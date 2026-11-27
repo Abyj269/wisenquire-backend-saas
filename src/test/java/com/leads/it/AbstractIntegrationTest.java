@@ -57,6 +57,10 @@ public abstract class AbstractIntegrationTest {
     @MockBean
     protected WhatsAppGraphApiClient graphApi;
 
+    /** Module 18: the AI provider calls (chat / transcription), metered; no real provider is ever called. */
+    @MockBean
+    protected com.leads.service.AiMeteredCalls aiCalls;
+
     @Autowired
     protected TenantFixture fixture;
 }

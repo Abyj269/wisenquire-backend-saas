@@ -42,9 +42,85 @@ public class AiTranslationService {
         return translationRepo.findByMessageId(messageId).map(t -> toDto(messageId, t));
     }
 
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
+    private final com.leads.flags.FeatureFlags flags;
+
+    private org.springframework.transaction.support.TransactionTemplate tx() {
+        return new org.springframework.transaction.support.TransactionTemplate(transactions);
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate readTx() {
+        var t = tx();
+        t.setReadOnly(true);
+        return t;
+    }
+
+    /** Module 18 P1 (S3-b): flag ai.short_transactions for the caller's organization. */
+    private boolean shortTransactions() {
+        return flags.isOn(com.leads.flags.FeatureFlag.AI_SHORT_TRANSACTIONS);
+    }
+
     /** Idempotent — a second call for the same message returns the cached row without a second AI request. */
-    @Transactional
     public AiTranslationDto translate(Long messageId) {
+        return shortTransactions() ? translateShort(messageId) : tx().execute(st -> translateInOneTransaction(messageId));
+    }
+
+    private static final String TRANSLATE_PROMPT = "Translate the customer message below into English. "
+            + "Reply with ONLY the translation — no explanation, no quotation marks.";
+
+    /** Module 18 P1 (S3-b): short transactions; nothing is open during the provider call. */
+    private AiTranslationDto translateShort(Long messageId) {
+        record Prep(AiTranslationDto cached, String body, String language, Long branchId) { }
+        Prep p = readTx().execute(st -> {
+            WhatsAppMessage message = access.record(WhatsAppMessage.class, messageId);
+            Optional<WhatsAppMessageTranslation> existing = translationRepo.findByMessageId(messageId);
+            if (existing.isPresent()) return new Prep(toDto(messageId, existing.get()), null, null, null);
+            if (message.getBodyText() == null || message.getBodyText().isBlank())
+                throw new IllegalArgumentException("This message has no text to translate.");
+            Branch branch = message.getConversation().getBranch();
+            if (branch == null) throw new IllegalStateException("This conversation has no branch assigned; AI features require a branch.");
+            return new Prep(null, message.getBodyText(), message.getDetectedLanguage(), branch.getId());
+        });
+        if (p.cached() != null) return p.cached();
+
+        AiUsageGuardService.Reservation reservation = usageGuard.reserveNow(
+                p.branchId(), AiUsageGuardService.Feature.TRANSLATION, TRANSLATE_PROMPT.length() + p.body().length(), MAX_OUTPUT_TOKENS);
+        AiProviderResolver.Resolved resolved;
+        AiChatResponse response;
+        try {
+            resolved = readTx().execute(st -> providerResolver.resolveForBranch(p.branchId()));
+            AiUsageGuardService.requireNoTransaction();
+            response = meteredCalls.chat("TRANSLATION", resolved.getClient(), resolved.getConfig(), AiChatRequest.builder()
+                    .systemPrompt(TRANSLATE_PROMPT)
+                    .messages(List.of(AiChatMessage.builder().role(AiChatRole.USER).content(p.body()).build()))
+                    .maxOutputTokens(MAX_OUTPUT_TOKENS)
+                    .temperature(0.2)
+                    .build());
+        } catch (RuntimeException e) {
+            usageGuard.releaseNow(reservation);
+            throw e;
+        }
+        usageGuard.recordActualNow(reservation, response.getPromptTokens(), response.getCompletionTokens());
+        String text = response.getContent() != null ? response.getContent().trim() : "";
+        String provider = resolved.getConfig().getProvider().name(), model = resolved.getConfig().getModelName();
+        return tx().execute(st -> {
+            WhatsAppMessage message = access.record(WhatsAppMessage.class, messageId);
+            Optional<WhatsAppMessageTranslation> raced = translationRepo.findByMessageId(messageId);
+            if (raced.isPresent()) return toDto(messageId, raced.get()); // translated meanwhile by another request
+            WhatsAppMessageTranslation translation = new WhatsAppMessageTranslation();
+            translation.setMessage(message);
+            translation.setCompany(message.getConversation().getCompany());
+            translation.setSourceLanguage(p.language() != null ? p.language() : "auto");
+            translation.setTranslatedText(text);
+            translation.setProvider(provider);
+            translation.setModelName(model);
+            translation.setGeneratedByUser(access.actor());
+            return toDto(messageId, translationRepo.save(translation));
+        });
+    }
+
+    /** The original path (flag OFF), unchanged; runs inside the caller's transaction. */
+    private AiTranslationDto translateInOneTransaction(Long messageId) {
         WhatsAppMessage message = access.record(WhatsAppMessage.class, messageId);
         Optional<WhatsAppMessageTranslation> existing = translationRepo.findByMessageId(messageId);
         if (existing.isPresent()) return toDto(messageId, existing.get());

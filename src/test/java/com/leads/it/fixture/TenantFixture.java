@@ -24,10 +24,10 @@ import java.util.function.Supplier;
 @TestComponent
 public class TenantFixture {
 
-    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS", "PRODUCT_CATALOG", "WHATSAPP_TEMPLATES"};
+    private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS", "PRODUCT_CATALOG", "WHATSAPP_TEMPLATES", "AI_ASSISTANT"};
     /** Tenant-admin rights (module 03): managers have them; agents do not, like the real "Agent" template. */
     // Module 17: WHATSAPP_AUTOMATIONS is manager-only (doc assumption: OWN roles don't configure automations).
-    private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT", "WHATSAPP_AUTOMATIONS"};
+    private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT", "WHATSAPP_AUTOMATIONS", "AI_SETTINGS"};
 
     private final EntityManager em;
     private final TransactionTemplate tx;
@@ -228,6 +228,24 @@ public class TenantFixture {
                 .automation(em.getReference(Automation.class, automationId))
                 .customerPhone("971500000000").customerName("IT Execution")
                 .status(ExecutionStatus.COMPLETED).startedAt(java.time.LocalDateTime.now()).build()).getId());
+    }
+
+    /** Module 18: {@code s}'s branch has exactly one selected, active AI provider (OpenAI); returns its id. */
+    public Long ensureAiProvider(Slot s) {
+        return inTx(() -> {
+            var existing = em.createQuery("SELECT c FROM AiProviderConfig c WHERE c.branch.id = :b AND c.isSelected = true AND c.isActive = true",
+                    AiProviderConfig.class).setParameter("b", branchId.get(s)).getResultList();
+            if (!existing.isEmpty()) return existing.get(0).getId();
+            return persist(AiProviderConfig.builder().company(companyRef(s)).branch(em.getReference(Branch.class, branchId.get(s)))
+                    .provider(AiProviderType.OPENAI).modelName("gpt-it").apiKey("it-not-a-real-key").isActive(true).isSelected(true).build()).getId();
+        });
+    }
+
+    /** Module 18: a text (or audio) inbound message in conversation {@code conversationId}. */
+    public Long freshInboundMessage(Long conversationId, String type, String body) {
+        return inTx(() -> persist(WhatsAppMessage.builder().conversation(em.getReference(WhatsAppConversation.class, conversationId))
+                .direction(MessageDirection.INBOUND).messageType(type).bodyText(body).status(MessageStatus.DELIVERED)
+                .wamid("wamid.it-in-" + seq.incrementAndGet()).build()).getId());
     }
 
     /** Module 15: a fresh saved reply of {@code s}'s company. */

@@ -31,6 +31,7 @@ import java.time.format.DateTimeFormatter;
 @Service
 @RequiredArgsConstructor
 public class AiUsageGuardService {
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
 
     public enum Feature { REPLY_SUGGESTION, MESSAGE_IMPROVEMENT, TRANSLATION, CONVERSION_SCORING, SUMMARIZATION, TRANSCRIPTION }
 
@@ -62,6 +63,45 @@ public class AiUsageGuardService {
      */
     @Transactional
     public Reservation checkAndReserve(Long branchId, Feature feature, int estimatedPromptChars, int maxOutputTokens) {
+        return doCheckAndReserve(branchId, feature, estimatedPromptChars, maxOutputTokens);
+    }
+
+    // ---- module 18 P1 (S3-b, flag ai.short_transactions) ------------------------------------------
+
+    private org.springframework.transaction.support.TransactionTemplate newTransaction() {
+        var t = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        t.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return t;
+    }
+
+    /**
+     * Same admission check as {@link #checkAndReserve}, but always in its OWN transaction: it commits (and so
+     * releases the counter row locks) before the caller makes the provider call.
+     */
+    public Reservation reserveNow(Long branchId, Feature feature, int estimatedPromptChars, int maxOutputTokens) {
+        return newTransaction().execute(st -> doCheckAndReserve(branchId, feature, estimatedPromptChars, maxOutputTokens));
+    }
+
+    /** {@link #recordActual} in its own short transaction. */
+    public void recordActualNow(Reservation reservation, Integer actualPromptTokens, Integer actualCompletionTokens) {
+        newTransaction().executeWithoutResult(st -> recordActual(reservation, actualPromptTokens, actualCompletionTokens));
+    }
+
+    /** The provider call failed: give the request and its estimated tokens back, so a failure does not count against the cap. */
+    public void releaseNow(Reservation reservation) {
+        newTransaction().executeWithoutResult(st -> {
+            counterRepo.release(reservation.getBranchId(), "DAY", reservation.getDayKey(), reservation.getEstimatedTokens());
+            counterRepo.release(reservation.getBranchId(), "MONTH", reservation.getMonthKey(), reservation.getEstimatedTokens());
+        });
+    }
+
+    /** Guard for the short path: the provider call must not run inside a DB transaction (CLAUDE.md hard rule 2). */
+    public static void requireNoTransaction() {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("An AI provider call must not run inside a DB transaction (hard rule 2).");
+    }
+
+    private Reservation doCheckAndReserve(Long branchId, Feature feature, int estimatedPromptChars, int maxOutputTokens) {
         Branch branch = branchRepo.findById(branchId)
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + branchId));
         AiBranchSettings settings = branchSettingsService.resolveEffective(branchId);

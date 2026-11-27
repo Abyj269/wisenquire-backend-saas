@@ -63,8 +63,93 @@ public class AiConversionScoringService {
         return scoreRepo.findByLeadId(lead.getId()).map(s -> toDto(lead, s));
     }
 
-    @Transactional
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
+    private final com.leads.flags.FeatureFlags flags;
+
+    private org.springframework.transaction.support.TransactionTemplate tx() {
+        return new org.springframework.transaction.support.TransactionTemplate(transactions);
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate readTx() {
+        var t = tx();
+        t.setReadOnly(true);
+        return t;
+    }
+
+    /** Module 18 P1 (S3-b): flag ai.short_transactions for the caller's organization. */
+    private boolean shortTransactions() {
+        return flags.isOn(com.leads.flags.FeatureFlag.AI_SHORT_TRANSACTIONS);
+    }
+
     public AiConversionScoreDto refresh(String leadNumber) {
+        return shortTransactions() ? refreshShort(leadNumber) : tx().execute(st -> refreshInOneTransaction(leadNumber));
+    }
+
+    /** Module 18 P1 (S3-b): short transactions; nothing is open during either provider call (the JSON retry included). */
+    private AiConversionScoreDto refreshShort(String leadNumber) {
+        record Prep(Long leadId, Long conversationId, Long branchId, AssembledAiContext ctx) { }
+        Prep p = readTx().execute(st -> {
+            Lead lead = requireLead(leadNumber);
+            WhatsAppConversation conversation = conversationRepo.findByLeadId(lead.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("This lead has no linked WhatsApp conversation to analyze."));
+            AssembledAiContext ctx = contextAssembly.assembleForConversation(conversation.getId());
+            if (ctx.getMessages().isEmpty()) throw new IllegalArgumentException("Not enough chat history yet to score this lead.");
+            return new Prep(lead.getId(), conversation.getId(), conversation.getBranch().getId(), ctx);
+        });
+        JsonNode parsed = attemptScoringCallShort(p.branchId(), p.ctx(), SCORING_INSTRUCTIONS);
+        if (parsed == null) parsed = attemptScoringCallShort(p.branchId(), p.ctx(), SCORING_INSTRUCTIONS + JSON_RETRY_REMINDER);
+        if (parsed == null) throw new AiProviderApiException("The AI provider returned an unparseable response for conversion scoring. Please try again.");
+        final JsonNode result = parsed;
+        return tx().execute(st -> {
+            Lead lead = requireLead(leadNumber);
+            WhatsAppConversation conversation = conversationRepo.findByLeadId(lead.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("This lead has no linked WhatsApp conversation to analyze."));
+            LeadConversionScore score = scoreRepo.findByLeadId(lead.getId()).orElseGet(() ->
+                    LeadConversionScore.builder().lead(lead).company(lead.getCompany()).build());
+            score.setScore(result.path("score").asInt(0));
+            score.setStrengthLabel(result.path("strengthLabel").asText("MEDIUM"));
+            score.setUrgencyLabel(result.path("urgencyLabel").asText(null));
+            score.setRationale(result.path("rationale").asText(""));
+            score.setSignalsJson(result.has("signals") ? result.get("signals").toString() : null);
+            score.setBasedOnMessageCount(p.ctx().getMessageCount());
+            score.setBasedOnConversation(conversation);
+            score.setGeneratedByUser(access.actor());
+            score.setGeneratedAt(LocalDateTime.now());
+            LeadConversionScore saved = scoreRepo.save(score);
+            leadService.recordActivity(lead, ActivityType.NOTE, "AI Conversion Score Refreshed",
+                    "Score: " + saved.getScore() + "/100 (" + saved.getStrengthLabel() + "), urgency "
+                            + saved.getUrgencyLabel() + " — based on the last " + saved.getBasedOnMessageCount() + " messages.",
+                    access.actor());
+            return toDto(lead, saved);
+        });
+    }
+
+    private JsonNode attemptScoringCallShort(Long branchId, AssembledAiContext ctx, String systemPrompt) {
+        int estimatedPromptChars = systemPrompt.length();
+        for (AiChatMessage m : ctx.getMessages()) estimatedPromptChars += m.getContent().length();
+        AiUsageGuardService.Reservation reservation = usageGuard.reserveNow(
+                branchId, AiUsageGuardService.Feature.CONVERSION_SCORING, estimatedPromptChars, MAX_OUTPUT_TOKENS);
+        AiChatResponse response;
+        try {
+            AiProviderResolver.Resolved resolved = readTx().execute(st -> providerResolver.resolveForBranch(branchId));
+            AiUsageGuardService.requireNoTransaction();
+            response = meteredCalls.chat("CONVERSION_SCORING", resolved.getClient(), resolved.getConfig(), AiChatRequest.builder()
+                    .systemPrompt(systemPrompt)
+                    .messages(ctx.getMessages())
+                    .maxOutputTokens(MAX_OUTPUT_TOKENS)
+                    .temperature(0.3)
+                    .expectJson(true)
+                    .build());
+        } catch (RuntimeException e) {
+            usageGuard.releaseNow(reservation);
+            throw e;
+        }
+        usageGuard.recordActualNow(reservation, response.getPromptTokens(), response.getCompletionTokens());
+        return tryParseJson(response.getContent());
+    }
+
+    /** The original path (flag OFF), unchanged; runs inside the caller's transaction. */
+    private AiConversionScoreDto refreshInOneTransaction(String leadNumber) {
         Lead lead = requireLead(leadNumber);
         WhatsAppConversation conversation = conversationRepo.findByLeadId(lead.getId())
                 .orElseThrow(() -> new IllegalArgumentException("This lead has no linked WhatsApp conversation to analyze."));

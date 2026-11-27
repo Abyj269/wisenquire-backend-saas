@@ -31,6 +31,7 @@ import java.nio.file.Paths;
 @RequiredArgsConstructor
 @Slf4j
 public class WhatsAppMediaService {
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
     private final TenantAccess access;
 
     private final WhatsAppMessageRepository messageRepo;
@@ -72,6 +73,41 @@ public class WhatsAppMediaService {
 
         cacheToDisk(messageId, mimeType, data);
         return new CachedMedia(data, mimeType, msg.getMediaFileName());
+    }
+
+    /**
+     * Module 18 P1 (S3-b): {@link #resolve} for callers that must not hold a transaction during the Meta download
+     * (voice-note transcription on the short path). The message and its number are read in a short read-only
+     * transaction; the download runs with none open.
+     */
+    public CachedMedia resolveWithoutTransaction(Long messageId) {
+        record Source(String mediaId, String mime, String fileName, WhatsAppConfiguration config) { }
+        var read = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        read.setReadOnly(true);
+        Source src = read.execute(st -> {
+            access.record(com.leads.model.entity.WhatsAppMessage.class, messageId);
+            WhatsAppMessage msg = messageRepo.findById(messageId)
+                    .orElseThrow(() -> new IllegalArgumentException("Message not found: " + messageId));
+            if (msg.getMediaId() == null) throw new IllegalArgumentException("Message " + messageId + " has no media attached.");
+            String number = msg.getConversation().getReceivingPhoneNumberId();
+            WhatsAppConfiguration config = number != null ? configRepo.findByPhoneNumberId(number).orElse(null) : null;
+            if (config != null) config.getAccessToken(); // loaded now: used detached for the download
+            return new Source(msg.getMediaId(), msg.getMediaMimeType(), msg.getMediaFileName(), config);
+        });
+        Path cachedFile = cachedFilePath(messageId, src.mime());
+        if (Files.exists(cachedFile)) {
+            try {
+                return new CachedMedia(Files.readAllBytes(cachedFile), src.mime(), src.fileName());
+            } catch (IOException ex) {
+                log.warn("Failed reading cached media file {} — refetching from Meta.", cachedFile, ex);
+            }
+        }
+        if (src.config() == null) throw new WhatsAppApiException("This conversation's WhatsApp number isn't connected — can't fetch media.");
+        String[] mimeHolder = new String[1];
+        byte[] data = graphApiClient.downloadMedia(src.config(), src.mediaId(), mimeHolder);
+        String mimeType = mimeHolder[0] != null ? mimeHolder[0] : src.mime();
+        cacheToDisk(messageId, mimeType, data);
+        return new CachedMedia(data, mimeType, src.fileName());
     }
 
     /** Called right after an outbound send, when we already hold the bytes — skips a wasted Meta round trip on first view. */

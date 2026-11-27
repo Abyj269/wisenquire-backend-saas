@@ -38,6 +38,14 @@ public interface AiUsageCounterRepository extends JpaRepository<AiUsageCounter, 
 
     Optional<AiUsageCounter> findByBranchIdAndPeriodTypeAndPeriodKey(Long branchId, String periodType, String periodKey);
 
+    /** Module 18 P1: gives back one admitted request and its estimated tokens (the provider call failed). */
+    @Modifying
+    @Query(value = "UPDATE ai_usage_counters SET request_count = GREATEST(request_count - 1, 0), "
+            + "estimated_tokens = GREATEST(estimated_tokens - :tokens, 0), updated_at = NOW() "
+            + "WHERE branch_id = :branchId AND period_type = :periodType AND period_key = :periodKey", nativeQuery = true)
+    void release(@Param("branchId") Long branchId, @Param("periodType") String periodType,
+                 @Param("periodKey") String periodKey, @Param("tokens") long tokens);
+
     // Post-call reconciliation: nudges estimated_tokens toward the provider's
     // real reported usage instead of permanently drifting from the cheap
     // pre-call char/4 estimate. A no-op (delta 0) if the row was since purged.
