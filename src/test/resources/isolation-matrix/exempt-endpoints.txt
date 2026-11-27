@@ -9,3 +9,4 @@ POST /auth/refresh  # public by design: authenticated by the refresh token itsel
 POST /auth/logout  # public by design: revokes the login of the given refresh token only; always 204 (module 02 P2)
 POST /public/password-reset  # public by design: always 202, never reveals whether an account exists; rate-limited (module 02 P2)
 POST /public/password-reset/confirm  # public by design: authenticated by a single-use, 30-minute reset token (module 02 P2)
+POST /email/webhook/bounce  # public by design: authenticated by an HMAC-SHA256 signature over the body; off without a secret; no tenant data (Step 6.2)

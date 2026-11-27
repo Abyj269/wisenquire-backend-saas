@@ -51,7 +51,7 @@
 (d) com.leads.service.AiConversionScoringService.refreshInOneTransaction(java.lang.String) calls LocalDateTime.now() || TIMESTAMP || state/audit timestamp (setXxxAt(now)), server wall-clock
 (d) com.leads.service.AiConversionScoringService.refreshShort(java.lang.String) calls LocalDateTime.now() || TIMESTAMP || state/audit timestamp (setXxxAt(now)), server wall-clock
 (d) com.leads.service.AiUsageLedger.start(com.leads.model.entity.AiProviderConfig, java.lang.String, java.lang.String) calls LocalDateTime.now() || TIMESTAMP || ledger start time (UTC instant)
-(d) com.leads.service.AuthService.issueOtpChallenge(com.leads.model.entity.User) calls LocalDateTime.now() || TIMESTAMP || OTP expiry (now plus minutes)
+(d) com.leads.service.AuthService.issueOtpChallenge(com.leads.model.entity.User, [Ljava.lang.Runnable;) calls LocalDateTime.now() || TIMESTAMP || OTP expiry (now plus minutes)
 (d) com.leads.service.AuthService.verifyOtp(com.leads.dto.auth.OtpVerifyRequest) calls LocalDateTime.now() || TIMESTAMP || OTP expiry check
 (d) com.leads.service.AutomationEngineService.execute(com.leads.service.AutomationEngineService$Matched, com.leads.service.AutomationEngineService$Inbound) calls LocalDateTime.now() || TIMESTAMP || state/audit timestamp (setXxxAt(now)), server wall-clock
 (d) com.leads.service.AutomationEngineService.recordQueueFull(java.lang.Long) calls LocalDateTime.now() || TIMESTAMP || state/audit timestamp (setXxxAt(now)), server wall-clock

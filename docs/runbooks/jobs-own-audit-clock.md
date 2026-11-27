@@ -10,6 +10,7 @@ Each scheduled job takes a lock in the `shedlock` table, so with several instanc
 | `ads-sync` | cron `ads.sync.cron` (hourly at :15) | 50 min / 1 min |
 | `broadcast-scheduler` | every `broadcast.scheduler.check-ms` (60 s) | 5 min / 10 s |
 | `broadcast-recovery` (module 16) | every `broadcast.recovery.check-ms` (60 s, first run after 60 s) | 5 min / 10 s |
+| `email-outbox` (module 02, Step 6.2) | every `email.outbox.check-ms` (10 s, first run after 10 s) | 5 min / 1 s |
 | `whatsapp-receipt-reconcile` | every `whatsapp.receipts.reconcile-ms` (2 s) | 1 min / 1 s |
 | `whatsapp-receipt-cleanup` | every `whatsapp.receipts.cleanup-ms` (1 h) | 30 min / 1 min |
 

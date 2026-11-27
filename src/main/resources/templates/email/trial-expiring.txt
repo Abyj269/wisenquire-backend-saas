@@ -1,0 +1,5 @@
+[(${productName})]: your trial ends soon
+
+The trial of [(${organizationName})] ends in [(${daysLeft})] days.
+Choose a plan to keep using your account without interruption:
+[(${link})]

@@ -1,0 +1,5 @@
+[(${productName})]: you have been invited
+
+[(${inviterName})] invited you to join [(${organizationName})].
+Accept the invitation to set your password and sign in:
+[(${link})]

@@ -58,6 +58,10 @@ app:
   # fail = refuse to start, warn = log an error, off = skip. application-prod.yml sets fail.
   server-zone-guard: ${APP_SERVER_ZONE_GUARD:warn}
   mail:
+    # Step 6.2: the name shown in email templates (until per-tenant branding, module 24).
+    product-name: ${APP_MAIL_PRODUCT_NAME:WiseNquire}
+    # Step 6.2: HMAC secret of POST /email/webhook/bounce. Empty = the webhook is off (401).
+    webhook-secret: ${EMAIL_WEBHOOK_SECRET:}
     # Some providers (ZeptoMail, SendGrid, etc.) authenticate with an API-key
     # style username (e.g. "emailapikey") that isn't a valid email address in
     # its own right - the message's From header needs the actual verified

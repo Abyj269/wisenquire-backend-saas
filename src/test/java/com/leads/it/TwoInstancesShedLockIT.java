@@ -74,6 +74,11 @@ class TwoInstancesShedLockIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void emailOutboxRunsOnce() throws Exception { // Step 6.2
+        firesOnce(ScheduledJob.EMAIL_OUTBOX, com.leads.mail.EmailOutbox.class, com.leads.mail.EmailOutbox::run);
+    }
+
+    @Test
     void receiptReconcileRunsOnce() throws Exception {
         firesOnce(ScheduledJob.WHATSAPP_RECEIPT_RECONCILE, WhatsAppReceiptService.class, WhatsAppReceiptService::reconcile);
     }

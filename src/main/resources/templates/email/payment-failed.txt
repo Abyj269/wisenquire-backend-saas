@@ -1,0 +1,5 @@
+[(${productName})]: your payment did not go through
+
+We could not collect [(${amount})] for [(${organizationName})].
+Update your payment method to keep your subscription active:
+[(${link})]

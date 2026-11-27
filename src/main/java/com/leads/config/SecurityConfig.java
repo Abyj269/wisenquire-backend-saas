@@ -104,6 +104,8 @@ public class SecurityConfig {
                                 "/auth/logout", "/api/v1/auth/logout",
                                 "/public/password-reset", "/api/v1/public/password-reset",
                                 "/public/password-reset/confirm", "/api/v1/public/password-reset/confirm",
+                                // Step 6.2: bounce/complaint notices, authenticated by their HMAC signature.
+                                "/email/webhook/bounce", "/api/v1/email/webhook/bounce",
                                 "/whatsapp/webhook", "/api/v1/whatsapp/webhook",
                                 // Liveness/readiness probes (Actuator). Only "health" is exposed by
                                 // default (application.yml), and it shows no details.

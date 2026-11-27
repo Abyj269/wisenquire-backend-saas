@@ -1,0 +1,5 @@
+[(${productName})]: your invoice is ready
+
+Invoice [(${invoiceNumber})] for [(${organizationName})] has been issued for [(${amount})].
+View it here:
+[(${link})]

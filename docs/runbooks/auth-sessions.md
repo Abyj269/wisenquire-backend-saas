@@ -28,9 +28,31 @@ UPDATE refresh_tokens SET revoked_at = NOW(6) WHERE user_id = <id> AND revoked_a
 ## Password reset (no flag)
 - `POST /public/password-reset {email}` always answers **202**, whether or not the address has an account. An active account gets an email with `<app.public-url>/reset-password?token=…`.
   - The link works once, for 30 minutes (`app.security.password-reset.expiry-minutes`); a newer request replaces an older link.
-  - The email is sent on the `mail-` thread after the request answered (no transaction open).
+  - The email is queued in `email_outbox` in the same transaction as the token and sent by the `email-outbox` job (see below).
   - Rate limits: 10 requests per 15 minutes per IP, 3 per address.
 - `POST /public/password-reset/confirm {token, newPassword}`: 204 on success; the password must be 8–128 characters; every session of the user ends. 400 `VALIDATION_FAILED` for a bad, used or expired link.
 - **Set `APP_PUBLIC_URL`** on every deployment to the address users open the app at; the default is `http://localhost:4200`.
 - The frontend page `/reset-password` arrives in a later Phase 2 step; until then a link opens the app without that page.
-- Mail goes through the existing SMTP settings until the email outbox (Step 6.2). A failed send is logged as "Password reset email delivery failed."
+
+## Email outbox and templates (Step 6.2, no flag)
+- **Templates** (`src/main/resources/templates/email/`, HTML + text each): OTP, VERIFY_EMAIL, INVITE, PASSWORD_RESET, TRIAL_EXPIRING, PAYMENT_FAILED, INVOICE_ISSUED. Today only OTP and PASSWORD_RESET are sent; the others are ready for later modules. Product name: `APP_MAIL_PRODUCT_NAME` (default WiseNquire).
+- **Login OTP:** still sent synchronously (the user waits for it), after the login transaction committed, never through the outbox. A failed send answers the login with an error, as before.
+- **Everything else goes through `email_outbox`** (V62): queued in the caller's transaction (nothing is sent if it rolls back), sent by the `email-outbox` job with no transaction open, in batches of 20 claimed with `FOR UPDATE SKIP LOCKED`.
+  - Status: `PENDING` → `SENDING` → `SENT`; a failed send is retried after 1 min, 5 min, 15 min, 1 h, 6 h, then `FAILED` (6 attempts, `last_error` kept). A row left `SENDING` for 10 minutes (node stopped) is retried.
+  - `SUPPRESSED`: the address is in `email_suppressions` (V63); nothing is sent.
+  - Log lines mask the address (`j***@example.com`).
+- **Bounce webhook** `POST /email/webhook/bounce` (public, signed): body `{"email": "...", "type": "hard_bounce" | "complaint" | "soft_bounce"}`, header `X-Signature: sha256=<hex HMAC-SHA256 of the raw body with EMAIL_WEBHOOK_SECRET>`.
+  - No secret set: the webhook is off (401). Missing or wrong signature: 401. Unknown type or no address: 400. Success: 204.
+  - Hard bounce and complaint suppress the address (case-insensitive); a soft bounce is ignored (the outbox retries).
+- **Sender domain:** SPF, DKIM, DMARC in `EMAIL_DNS.md` (domain not chosen yet; placeholder `mail.example.com`).
+
+```sql
+-- what is waiting or failing
+SELECT status, COUNT(*) FROM email_outbox GROUP BY status;
+SELECT id, template, attempts, next_attempt_at, last_error FROM email_outbox WHERE status IN ('PENDING','FAILED') ORDER BY id DESC LIMIT 50;
+-- send a FAILED email again
+UPDATE email_outbox SET status = 'PENDING', attempts = 0, next_attempt_at = NOW(6) WHERE id = <id>;
+-- allow email to a suppressed address again (after the owner fixed the mailbox)
+DELETE FROM email_suppressions WHERE address = LOWER('<address>');
+```
+- **Rollback:** the outbox only carries the password reset today. Stopping the job (`email.outbox.check-ms` very high) holds emails as `PENDING`; they go out when it runs again.

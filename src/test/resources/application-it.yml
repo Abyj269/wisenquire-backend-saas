@@ -41,6 +41,11 @@ broadcast:
   recovery:
     check-ms: 86400000
     initial-delay-ms: 86400000
+# Step 6.2: the email-outbox job is triggered by the tests themselves.
+email:
+  outbox:
+    check-ms: 86400000
+    initial-delay-ms: 86400000
 whatsapp:
   receipts:
     initial-delay-ms: 86400000

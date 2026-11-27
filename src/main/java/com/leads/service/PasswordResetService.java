@@ -6,7 +6,6 @@ import com.leads.model.entity.User;
 import com.leads.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -20,14 +19,13 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.Executor;
 
 /**
  * Module 02 P2: self-service password reset (V61).
  * <ul>
  *   <li>{@link #request} always succeeds the same way (202), whether or not the email belongs to an active user, and
- *       sends the email on a separate thread after the transaction has committed, so neither the answer nor its timing
- *       reveals whether an account exists (and no transaction is open during the mail send: CLAUDE.md hard rule 2).</li>
+ *       queues the email in the email outbox in the same transaction (Step 6.2), so neither the answer nor its timing
+ *       reveals whether an account exists; the outbox job sends it with no transaction open (CLAUDE.md hard rule 2).</li>
  *   <li>{@link #confirm} accepts a token once, within its expiry, sets the new password and ends every session of the
  *       user (sessionVersion + 1, all refresh tokens revoked).</li>
  * </ul>
@@ -41,12 +39,10 @@ public class PasswordResetService {
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenService refreshTokens;
-    private final EmailService email;
+    private final com.leads.mail.EmailOutbox outbox;
     private final RequestRateLimiter rateLimiter;
     private final CompanyClock clock;
     private final PlatformTransactionManager transactions;
-    @Qualifier("mailExecutor")
-    private final Executor mailExecutor;
 
     @Value("${app.public-url:http://localhost:4200}")
     private String publicUrl = "http://localhost:4200";
@@ -61,10 +57,10 @@ public class PasswordResetService {
         String emailAddress = rawEmail == null ? "" : rawEmail.trim();
         rateLimiter.check("pwreset-ip:" + clientIp, 10, 900_000);
         rateLimiter.check("pwreset-user:" + emailAddress.toLowerCase(Locale.ROOT), 3, 900_000);
-        String token = new TransactionTemplate(transactions).execute(st -> {
+        new TransactionTemplate(transactions).executeWithoutResult(st -> {
             User user = users.findByEmail(emailAddress).orElse(null);
             if (user == null || !Boolean.TRUE.equals(user.getIsActive())
-                    || (user.getOrganization() != null && !Boolean.TRUE.equals(user.getOrganization().getIsActive()))) return null;
+                    || (user.getOrganization() != null && !Boolean.TRUE.equals(user.getOrganization().getIsActive()))) return; // same answer, no email
             LocalDateTime now = clock.serverNow();
             // A new request supersedes any earlier unused link.
             jdbc.update("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", Timestamp.valueOf(now), user.getId());
@@ -72,11 +68,10 @@ public class PasswordResetService {
             jdbc.update("INSERT INTO password_resets (user_id, token_hash, expires_at, created_at, ip) VALUES (?, ?, ?, ?, ?)",
                     user.getId(), TokenHashing.sha256(raw), Timestamp.valueOf(now.plusMinutes(expiryMinutes)), Timestamp.valueOf(now),
                     clientIp == null ? null : clientIp.substring(0, Math.min(64, clientIp.length())));
-            return raw;
+            // Step 6.2: queued in this transaction (only if the token commits); the email-outbox job sends it later.
+            String link = publicUrl.replaceAll("/+$", "") + "/reset-password?token=" + URLEncoder.encode(raw, StandardCharsets.UTF_8);
+            outbox.enqueue(user.getEmail(), com.leads.mail.MailTemplate.PASSWORD_RESET, java.util.Map.of("link", link, "minutes", expiryMinutes));
         });
-        if (token == null) return; // unknown or inactive: same answer, no email
-        String link = publicUrl.replaceAll("/+$", "") + "/reset-password?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8);
-        mailExecutor.execute(() -> email.sendPasswordResetEmail(emailAddress, link, expiryMinutes));
     }
 
     public void confirm(String rawToken, String newPassword) {

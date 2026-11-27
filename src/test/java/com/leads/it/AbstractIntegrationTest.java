@@ -62,11 +62,12 @@ public abstract class AbstractIntegrationTest {
     protected com.leads.service.AiMeteredCalls aiCalls;
 
     /**
-     * Module 02 P2: outgoing email (OTP, password reset). One shared mock, so every IT runs in the same Spring
-     * context (a per-class @MockBean would start a second context against the same database and fixture).
+     * Module 02 P2 / Step 6.2: the mail provider (SMTP), so no email leaves the tests; templates, the outbox and
+     * EmailService run for real. One shared mock: a per-class @MockBean would start a second Spring context against
+     * the same database and fixture.
      */
     @MockBean
-    protected com.leads.service.EmailService emailService;
+    protected com.leads.mail.MailProvider mailProvider;
 
     /** Module 19: the Meta / Google Ads clients; no real ad platform is ever called. */
     @MockBean

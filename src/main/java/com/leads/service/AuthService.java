@@ -51,6 +51,7 @@ public class AuthService {
     private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
     private final com.leads.flags.FeatureFlags flags;
     private final RefreshTokenService refreshTokens;
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
 
     /** Module 02 P2: access-token lifetime with flag auth.refresh_tokens ON (owner: 15 minutes). */
     @Value("${app.security.jwt.access-expiration-ms:900000}")
@@ -80,8 +81,20 @@ public class AuthService {
         userRepository.save(user);
     }
 
-    @Transactional
+    /**
+     * Step 6.2 (hard rule 2): the login work runs in its own transaction; a login OTP email is sent only after that
+     * transaction committed and released its connection, still before the response, so a failed send is reported
+     * to the user as before.
+     */
     public AuthResponse login(LoginRequest loginRequest, String clientIp) {
+        Runnable[] otpSend = new Runnable[1];
+        AuthResponse response = new org.springframework.transaction.support.TransactionTemplate(transactions)
+                .execute(st -> loginInTransaction(loginRequest, clientIp, otpSend));
+        if (otpSend[0] != null) otpSend[0].run();
+        return response;
+    }
+
+    private AuthResponse loginInTransaction(LoginRequest loginRequest, String clientIp, Runnable[] otpSend) {
         rateLimiter.check("login-ip:" + clientIp, 30, 60000);
         rateLimiter.check("login-user:" + loginRequest.getEmail().toLowerCase(java.util.Locale.ROOT), 10, 60000);
         Authentication authentication = authenticationManager.authenticate(
@@ -109,7 +122,7 @@ public class AuthService {
             if (clientIpTrusted) {
                 return buildTokenResponse(user, clientIp);
             }
-            return issueOtpChallenge(user);
+            return issueOtpChallenge(user, otpSend);
         }
 
         if (ipCheckActive && !clientIpTrusted) {
@@ -144,7 +157,7 @@ public class AuthService {
         return buildTokenResponse(user, null);
     }
 
-    private AuthResponse issueOtpChallenge(User user) {
+    private AuthResponse issueOtpChallenge(User user, Runnable[] otpSend) {
         rateLimiter.check("otp-issue:" + user.getId(), 1, 60000);
         loginOtpRepository.findByUserIdAndIsUsedFalseOrderByCreatedAtDesc(user.getId()).forEach(old -> old.setIsUsed(true));
         String code = generateOtpCode();
@@ -158,7 +171,11 @@ public class AuthService {
                 .build();
         loginOtpRepository.save(otp);
 
-        if (!exposeOtpInResponse) emailService.sendOtpEmail(user.getEmail(), code, otpExpiryMinutes);
+        if (!exposeOtpInResponse) {
+            // Step 6.2: sent by login() once this transaction has committed (hard rule 2).
+            String to = user.getEmail();
+            otpSend[0] = () -> emailService.sendOtpEmail(to, code, otpExpiryMinutes);
+        }
 
         return AuthResponse.builder()
                 .otpRequired(true)

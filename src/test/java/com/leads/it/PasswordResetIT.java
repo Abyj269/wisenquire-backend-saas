@@ -2,6 +2,8 @@ package com.leads.it;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leads.it.fixture.Slot;
+import com.leads.mail.EmailOutbox;
+import com.leads.mail.MailProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,31 +16,35 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 /**
- * Module 02 P2 (Step 6.1): password reset. The request always answers 202 and emails a link only to an active
- * account, after the transaction committed (no transaction open during the send); the link works once, within
- * 30 minutes; a reset ends every session of the user.
+ * Module 02 P2 (Steps 6.1, 6.2): password reset. The request always answers 202 and queues a link only for an active
+ * account, in the same transaction as the token; the email-outbox job sends it with no transaction open; the link
+ * works once, within 30 minutes; a reset ends every session of the user.
  */
 class PasswordResetIT extends AbstractIntegrationTest {
 
-    record Sent(String to, String link, boolean txOpen, String thread) { }
+    record Sent(String to, String text, boolean txOpen) { }
+
+    private static final Pattern TOKEN = Pattern.compile("reset-password\\?token=([A-Za-z0-9_%\\-]+)");
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired PasswordEncoder encoder;
+    @Autowired EmailOutbox outbox;
     private final ObjectMapper json = new ObjectMapper();
-    private final BlockingQueue<Sent> outbox = new ArrayBlockingQueue<>(10);
+    private final List<Sent> sent = new ArrayList<>();
     private Long userId;
     private String address;
 
@@ -48,10 +54,10 @@ class PasswordResetIT extends AbstractIntegrationTest {
         jdbc.update("UPDATE users SET password = ? WHERE id = ?", encoder.encode("Old-Password-1"), userId);
         address = jdbc.queryForObject("SELECT email FROM users WHERE id = ?", String.class, userId);
         doAnswer(inv -> {
-            outbox.add(new Sent(inv.getArgument(0), inv.getArgument(1), TransactionSynchronizationManager.isActualTransactionActive(),
-                    Thread.currentThread().getName()));
+            MailProvider.OutgoingMail m = inv.getArgument(0);
+            sent.add(new Sent(m.to(), m.text(), TransactionSynchronizationManager.isActualTransactionActive()));
             return null;
-        }).when(emailService).sendPasswordResetEmail(anyString(), anyString(), anyInt());
+        }).when(mailProvider).send(any());
     }
 
     private int requestReset(String emailAddress) throws Exception {
@@ -69,30 +75,41 @@ class PasswordResetIT extends AbstractIntegrationTest {
                 .content(json.writeValueAsString(Map.of("email", address, "password", password)))).andReturn().getResponse().getStatus();
     }
 
-    private String tokenFrom(Sent sent) {
-        String q = sent.link().substring(sent.link().indexOf("token=") + 6);
-        return URLDecoder.decode(q, StandardCharsets.UTF_8);
+    /** Runs the outbox job and returns the reset emails sent to our address. */
+    private List<Sent> deliver() {
+        outbox.sendDue();
+        return sent.stream().filter(s -> s.to().equals(address)).toList();
+    }
+
+    private static String tokenFrom(Sent s) {
+        Matcher m = TOKEN.matcher(s.text());
+        assertTrue(m.find(), s.text());
+        return URLDecoder.decode(m.group(1), StandardCharsets.UTF_8);
+    }
+
+    private int queued(String emailAddress) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM email_outbox WHERE to_address = ? AND template = 'PASSWORD_RESET'", Integer.class, emailAddress);
     }
 
     @Test
     void anUnknownEmailGetsTheSameAnswerAndNoEmail() throws Exception {
-        assertEquals(202, requestReset("nobody-" + fixture.phone() + "@nowhere.test"));
-        assertNull(outbox.poll(1, TimeUnit.SECONDS), "no email for an unknown address");
+        String nobody = "nobody-" + fixture.phone() + "@nowhere.test";
+        assertEquals(202, requestReset(nobody));
+        assertEquals(0, queued(nobody), "nothing queued for an unknown address");
     }
 
     @Test
     void aResetLinkWorksOnceAndEndsEverySession() throws Exception {
-        String oldAccess = fixture.token('A', com.leads.it.fixture.Persona.ORG_ADMIN); // another user's token is unaffected
+        String otherUsersToken = fixture.token('A', com.leads.it.fixture.Persona.ORG_ADMIN);
         int beforeVersion = jdbc.queryForObject("SELECT session_version FROM users WHERE id = ?", Integer.class, userId);
 
         assertEquals(202, requestReset(address));
-        Sent sent = outbox.poll(10, TimeUnit.SECONDS);
-        assertNotNull(sent, "a link was emailed");
-        assertEquals(address, sent.to());
-        assertFalse(sent.txOpen(), "no transaction is open while the email is sent (hard rule 2)");
-        assertTrue(sent.thread().startsWith("mail-"), "sent on the mail executor, after the request answered: " + sent.thread());
-        assertTrue(sent.link().contains("/reset-password?token="), sent.link());
-        String token = tokenFrom(sent);
+        assertEquals(1, queued(address), "queued in the outbox with the token");
+        List<Sent> mails = deliver();
+        assertEquals(1, mails.size(), "the outbox job sent the link");
+        assertFalse(mails.get(0).txOpen(), "no transaction is open while the email is sent (hard rule 2)");
+        assertEquals("SENT", jdbc.queryForObject("SELECT status FROM email_outbox WHERE to_address = ? AND template = 'PASSWORD_RESET'", String.class, address));
+        String token = tokenFrom(mails.get(0));
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM password_resets WHERE token_hash = ?", Integer.class, token), "only a hash is stored");
 
         MockHttpServletResponse weak = confirm(token, "short");
@@ -105,18 +122,18 @@ class PasswordResetIT extends AbstractIntegrationTest {
         assertEquals(beforeVersion + 1, jdbc.queryForObject("SELECT session_version FROM users WHERE id = ?", Integer.class, userId),
                 "every access token of the user is ended");
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM refresh_tokens WHERE user_id = ? AND revoked_at IS NULL", Integer.class, userId));
-        assertEquals(200, mvc.perform(get("/auth/profile").header("Authorization", "Bearer " + oldAccess)).andReturn().getResponse().getStatus());
+        assertEquals(200, mvc.perform(get("/auth/profile").header("Authorization", "Bearer " + otherUsersToken)).andReturn().getResponse().getStatus());
 
-        MockHttpServletResponse again = confirm(token, "Another-Password-1");
-        assertEquals(400, again.getStatus(), "single use");
+        assertEquals(400, confirm(token, "Another-Password-1").getStatus(), "single use");
     }
 
     @Test
     void anExpiredOrSupersededLinkIsRefused() throws Exception {
         assertEquals(202, requestReset(address));
-        String first = tokenFrom(outbox.poll(10, TimeUnit.SECONDS));
+        String first = tokenFrom(deliver().get(0));
         assertEquals(202, requestReset(address));
-        String second = tokenFrom(outbox.poll(10, TimeUnit.SECONDS));
+        List<Sent> mails = deliver();
+        String second = tokenFrom(mails.get(mails.size() - 1));
         assertEquals(400, confirm(first, "New-Password-1").getStatus(), "a newer request supersedes the earlier link");
 
         jdbc.update("UPDATE password_resets SET expires_at = expires_at - INTERVAL 31 MINUTE WHERE user_id = ? AND used_at IS NULL", userId);
@@ -128,6 +145,6 @@ class PasswordResetIT extends AbstractIntegrationTest {
     void anInactiveAccountGetsNoEmail() throws Exception {
         jdbc.update("UPDATE users SET is_active = 0 WHERE id = ?", userId);
         assertEquals(202, requestReset(address));
-        assertNull(outbox.poll(1, TimeUnit.SECONDS), "no email for an inactive account");
+        assertEquals(0, queued(address), "nothing queued for an inactive account");
     }
 }
