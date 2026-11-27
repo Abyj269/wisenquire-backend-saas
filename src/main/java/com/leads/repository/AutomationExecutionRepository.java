@@ -18,6 +18,9 @@ public interface AutomationExecutionRepository extends JpaRepository<AutomationE
 
     Long countByAutomationId(Long automationId);
 
+    /** Phase 1 close: an execution only through its own automation. */
+    java.util.Optional<AutomationExecution> findByIdAndAutomationId(Long id, Long automationId);
+
     Long countByAutomationIdAndStatus(Long automationId, ExecutionStatus status);
 
     List<AutomationExecution> findByAutomationId(Long automationId);

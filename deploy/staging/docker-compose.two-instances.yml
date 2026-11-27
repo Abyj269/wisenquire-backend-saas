@@ -1,0 +1,29 @@
+# Step 5.22 (end of Phase 1): two API instances against the same database, with fast job intervals, to prove
+# that every scheduled job runs once per tick across instances (ShedLock). Used by scripts/two-instances-check.sh:
+#   docker compose -f docker-compose.yml -f docker-compose.two-instances.yml up -d
+# Afterwards scripts/two-instances-check.sh returns staging to one instance.
+x-fast-jobs: &fast-jobs
+  # lockAtLeastFor in brackets: with a working lock the total across both instances cannot exceed one run per lock.
+  ADS_SYNC_CRON: "*/20 * * * * *"            # every 20 s on each instance (lock at least 1 min)
+  BROADCAST_SCHEDULER_CHECK_MS: "10000"      # every 10 s on each instance (lock at least 10 s)
+  BROADCAST_RECOVERY_CHECK_MS: "10000"       # every 10 s on each instance (lock at least 10 s)
+  BROADCAST_RECOVERY_INITIAL_DELAY_MS: "0"
+  WHATSAPP_RECEIPTS_RECONCILE_MS: "1000"     # every 1 s on each instance (lock at least 1 s)
+  WHATSAPP_RECEIPTS_CLEANUP_MS: "20000"      # every 20 s on each instance (lock at least 1 min)
+
+services:
+  api:
+    environment:
+      <<: *fast-jobs
+
+  api-2:
+    extends:
+      file: docker-compose.yml
+      service: api
+    environment:
+      <<: *fast-jobs
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: !override
+      - "127.0.0.1:${STAGING_MGMT_PORT_2:-19091}:9090"

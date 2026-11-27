@@ -64,6 +64,13 @@ public class AuthService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    /** The signed-in user dismissed the getting-started guide (moved from AuthController, Phase 1 close). */
+    @Transactional
+    public void markGettingStartedSeen(com.leads.model.entity.User user) {
+        user.setGettingStartedSeen(true);
+        userRepository.save(user);
+    }
+
     @Transactional
     public AuthResponse login(LoginRequest loginRequest, String clientIp) {
         rateLimiter.check("login-ip:" + clientIp, 30, 60000);

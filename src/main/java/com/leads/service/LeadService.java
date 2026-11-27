@@ -788,8 +788,7 @@ public class LeadService {
         BigDecimal totalDealValue = BigDecimal.ZERO;
 
         for (LeadProductDto pDto : productDtos) {
-            ProductMaster product = productRepo.findById(pDto.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException("Product not found: " + pDto.getProductId()));
+            ProductMaster product = access.record(ProductMaster.class, pDto.getProductId());
 
             access.sameCompany(lead.getCompany().getId(),product.getCompany());
             if(!Boolean.TRUE.equals(product.getIsActive())) throw new IllegalArgumentException("Product is inactive.");

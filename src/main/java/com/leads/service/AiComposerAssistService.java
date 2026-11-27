@@ -18,6 +18,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class AiComposerAssistService {
+    private final TenantAccess access;
     private final com.leads.flags.FeatureFlags flags;
     private final AiMeteredCalls meteredCalls;
 
@@ -28,6 +29,7 @@ public class AiComposerAssistService {
     private final AiProviderResolver providerResolver;
 
     public AiTextResultDto suggestReply(Long conversationId) {
+        access.record(com.leads.model.entity.WhatsAppConversation.class, conversationId); // also checked by the context assembly
         AssembledAiContext ctx = contextAssembly.assembleForConversation(conversationId);
         if (ctx.getMessages().isEmpty()) {
             throw new IllegalArgumentException("No chat history available to suggest a reply from.");
@@ -50,6 +52,7 @@ public class AiComposerAssistService {
     }
 
     public AiTextResultDto improveDraft(Long conversationId, String draftText) {
+        access.record(com.leads.model.entity.WhatsAppConversation.class, conversationId); // also checked by the context assembly
         if (draftText == null || draftText.isBlank()) {
             throw new IllegalArgumentException("Type a draft message first.");
         }

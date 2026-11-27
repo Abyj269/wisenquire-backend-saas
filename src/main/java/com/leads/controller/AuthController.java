@@ -23,16 +23,12 @@ public class AuthController {
 
     private final AuthService authService;
     private final com.leads.service.TenantAccess access;
-    private final com.leads.repository.UserRepository userRepository;
     private final com.leads.config.ClientIpResolver clientIp;
 
     @PostMapping("/getting-started/seen")
     @org.springframework.security.access.prepost.PreAuthorize("isAuthenticated()")
-    @org.springframework.transaction.annotation.Transactional
     public void markGettingStartedSeen() {
-        var user = access.actor();
-        user.setGettingStartedSeen(true);
-        userRepository.save(user);
+        authService.markGettingStartedSeen(access.actor()); // Phase 1 close: controllers do not use repositories (rule c)
     }
 
     @PostMapping("/login")

@@ -62,10 +62,10 @@ public class WhatsAppScheduleService {
     @Transactional
     public void saveWorkingHours(WorkingHoursUpsertRequest req) {
         validateSchedule(req);
-        req.getBranchIds().forEach(access::branch);
+        java.util.Map<Long, Branch> checked = new java.util.LinkedHashMap<>();
+        req.getBranchIds().forEach(id -> checked.put(id, access.branch(id))); // scope check returns the branch
         for (Long branchId : req.getBranchIds()) {
-            Branch branch = branchRepo.findById(branchId)
-                    .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + branchId));
+            Branch branch = checked.get(branchId);
             for (WorkingHoursDayDto day : req.getDays()) {
                 BranchWorkingHours row = workingHoursRepo.findByBranchIdAndDayOfWeek(branchId, day.getDayOfWeek())
                         .orElseGet(() -> BranchWorkingHours.builder().branch(branch).dayOfWeek(day.getDayOfWeek()).build());

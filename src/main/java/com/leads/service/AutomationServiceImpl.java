@@ -143,7 +143,7 @@ public class AutomationServiceImpl implements AutomationService {
     public AutomationDto duplicateAutomation(Long id, Long currentUserId) {
         Automation original = writable(id);
 
-        User createdBy = currentUserId != null ? userRepo.findById(currentUserId).orElse(null) : null;
+        User createdBy = currentUserId != null ? access.actor() : null; // the signed-in user (Phase 1 close)
 
         Automation copy = Automation.builder()
                 .company(original.getCompany())
@@ -187,8 +187,7 @@ public class AutomationServiceImpl implements AutomationService {
     @Transactional(readOnly = true)
     public AutomationExecutionDto getExecution(Long automationId, Long executionId) {
         readable(automationId);
-        AutomationExecution execution = executionRepo.findById(executionId)
-                .filter(e -> e.getAutomation().getId().equals(automationId))
+        AutomationExecution execution = executionRepo.findByIdAndAutomationId(executionId, automationId)
                 // Module 17 P1: an execution of another automation is a scope denial (403; 404 with errors.uniform_not_found).
                 .orElseThrow(() -> new com.leads.exception.ScopeDeniedException("Execution not found for this automation."));
         return mapToExecutionDto(execution);

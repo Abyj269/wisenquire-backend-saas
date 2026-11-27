@@ -247,7 +247,7 @@ public class QuotationService {
         int sortOrder = 0;
         for (QuotationItemDto dto : itemDtos) {
             if (dto == null) throw new IllegalArgumentException("Quotation items cannot be null.");
-            ProductMaster product = dto.getProductId() != null ? productRepo.findById(dto.getProductId()).orElse(null) : null;
+            ProductMaster product = dto.getProductId() != null ? access.record(ProductMaster.class, dto.getProductId()) : null;
             if (dto.getProductId() != null && (product == null || !Boolean.TRUE.equals(product.getIsActive())
                     || !product.getCompany().getId().equals(quotation.getCompany().getId())
                     || !quotation.getCurrency().equals(product.getCurrency()))) {

@@ -21,13 +21,13 @@ import java.util.*;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Plan D3-3 / 01 Part A item 7: ArchUnit rules a-c in REPORT MODE. This test never fails on a
- * violation; it prints the counts and writes {@code target/architecture/violations.txt}.
- * The rules switch to failing at the end of Phase 1 (01 Part B item 10), after modules 02-19
- * have cleared or allow-listed their violations: then replace {@link #report} with
- * {@code rule.check(classes)}.
+ * Plan D3-3 / 01 Part A item 7: ArchUnit rules a-d. Since Step 5.22 (end of Phase 1, 01 Part B item 10)
+ * the test FAILS on any finding that is not in the owner-approved allow-list
+ * ({@code src/test/resources/architecture/allow-list.txt}); it still writes every finding to
+ * {@code target/architecture/violations.txt}.
  * <p>
  * Approximations (bytecode-level, so deliberately conservative):
  * <ul>
@@ -136,31 +136,80 @@ class ArchitectureReportTest {
             .as("(d) services and controllers use CompanyClock, not LocalDate.now()/LocalDateTime.now()/atStartOfDay()")
             .allowEmptyShould(true);
 
+    /**
+     * Step 5.22 (01 Part B item 10): FAIL MODE. Every finding of rules (a)-(d) must be fixed or listed in
+     * {@code src/test/resources/architecture/allow-list.txt} with an owner-approved reason code. The test also
+     * fails on a stale entry (one that no longer matches a finding), so the list cannot outlive the code.
+     * {@code target/architecture/violations.txt} still lists every finding, allow-listed or not.
+     */
     @Test
-    void reportViolations() throws Exception {
+    void noViolationsOutsideTheAllowList() throws Exception {
         assertFalse(CLASSES.isEmpty(), "no classes imported");
         List<String> out = new ArrayList<>();
-        int total = 0;
+        List<String> all = new ArrayList<>();
         for (ArchRule rule : List.of(SCOPED_ID_PARAMETERS, FIND_BY_ID_NEEDS_RECORD, CONTROLLERS_WITHOUT_REPOSITORIES, SERVER_DATE_CALLS)) {
             List<String> lines = report(rule);
-            total += lines.size();
+            all.addAll(lines);
             out.add("== " + rule.getDescription() + ": " + lines.size() + " violation(s)");
             out.addAll(lines);
             out.add("");
         }
-        out.add(0, "ArchUnit report mode (01 Part A item 7). Total violations: " + total);
+        Map<String, String> allowed = allowList();
+        List<String> notAllowed = all.stream().filter(v -> !allowed.containsKey(key(v))).toList();
+        Set<String> used = new java.util.HashSet<>();
+        all.forEach(v -> used.add(key(v)));
+        List<String> stale = allowed.keySet().stream().filter(k -> !used.contains(k)).sorted().toList();
+        out.add(0, "ArchUnit FAIL mode (Step 5.22). Findings: " + all.size() + ", allow-listed: " + (all.size() - notAllowed.size())
+                + ", not allowed: " + notAllowed.size() + ", stale allow-list entries: " + stale.size());
         Path dir = Path.of("target", "architecture");
         Files.createDirectories(dir);
         Files.write(dir.resolve("violations.txt"), out);
         out.stream().filter(l -> l.startsWith("==") || l.startsWith("ArchUnit")).forEach(System.out::println);
+        assertTrue(notAllowed.isEmpty(), "Fix these or add them to architecture/allow-list.txt with an approved reason:\n" + String.join("\n", notAllowed));
+        assertTrue(stale.isEmpty(), "Remove these allow-list entries; they no longer match a finding:\n" + String.join("\n", stale));
     }
 
-    /** Report mode: evaluate, never throw. */
+    /** Evaluates one rule and returns its findings, sorted. */
     private static List<String> report(ArchRule rule) {
         EvaluationResult result = rule.evaluate(CLASSES);
         List<String> lines = new ArrayList<>(result.getFailureReport().getDetails());
         Collections.sort(lines);
         return lines;
+    }
+
+    /** Owner-approved reason codes for allow-list entries (Step 5.22). */
+    enum Reason {
+        /** A state or audit timestamp (setXxxAt(now)), an expiry or a duration: stored as server wall-clock, not a calendar decision. */
+        TIMESTAMP,
+        /** atStartOfDay() on a company-local date that is then converted with CompanyClock.toServer. */
+        COMPANY_DAY_HELPER,
+        /** A scheduler, executor or webhook path: the id never comes from a user; runs under TenantAccess.inCompany where it acts for a company. */
+        SYSTEM_PATH,
+        /** An internal helper: every caller has already scope-checked the record or company the id comes from. */
+        CHECKED_CALLER,
+        /** Checked another way (named in the note). */
+        CHECKED_OTHERWISE
+    }
+
+    /** A finding without its line number (lines drift; the method and the call identify it). */
+    static String key(String violation) {
+        return violation.replaceAll(", line \\d+$", "").trim();
+    }
+
+    /** {@code key || REASON || note}, one per line; # comments and blank lines ignored. */
+    static Map<String, String> allowList() throws Exception {
+        Map<String, String> entries = new java.util.LinkedHashMap<>();
+        try (var in = ArchitectureReportTest.class.getResourceAsStream("/architecture/allow-list.txt")) {
+            if (in == null) return entries;
+            for (String line : new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).split("\\R")) {
+                if (line.isBlank() || line.startsWith("#")) continue;
+                String[] parts = line.split(" \\|\\| ");
+                if (parts.length != 3 || parts[2].isBlank()) throw new IllegalStateException("Malformed allow-list line (key || REASON || note): " + line);
+                Reason.valueOf(parts[1].trim()); // unknown reason codes fail the test
+                if (entries.put(key(parts[0]), parts[1].trim()) != null) throw new IllegalStateException("Duplicate allow-list entry: " + parts[0]);
+            }
+        }
+        return entries;
     }
 
     // ---- helpers ---------------------------------------------------------------------------
