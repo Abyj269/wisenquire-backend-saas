@@ -31,6 +31,7 @@ import java.time.format.DateTimeFormatter;
 @Service
 @RequiredArgsConstructor
 public class AiUsageGuardService {
+    private final CompanyClock companyClock;
     private final org.springframework.transaction.PlatformTransactionManager transactions;
 
     public enum Feature { REPLY_SUGGESTION, MESSAGE_IMPROVEMENT, TRANSLATION, CONVERSION_SCORING, SUMMARIZATION, TRANSCRIPTION }
@@ -110,7 +111,7 @@ public class AiUsageGuardService {
             throw new IllegalStateException("This AI feature is disabled for this branch. Ask an admin to enable it in AI Settings.");
         }
 
-        LocalDateTime now = scheduleService.nowInCompanyZone(branch.getCompany());
+        LocalDateTime now = companyClock.now(branch.getCompany()); // D15: company-local day and month keys
         String dayKey = now.format(DAY_FMT);
         String monthKey = now.format(MONTH_FMT);
         long estimatedTokens = (long) Math.ceil(estimatedPromptChars / CHARS_PER_TOKEN) + Math.max(0, maxOutputTokens);
@@ -125,13 +126,13 @@ public class AiUsageGuardService {
                 .orElseThrow(() -> new IllegalStateException("AI usage counter missing immediately after upsert."));
 
         if (dayCounter.getRequestCount() > settings.getDailyRequestCap()) {
-            throw limitExceeded(LimitType.DAILY_REQUESTS, dayCounter.getRequestCount(), settings.getDailyRequestCap(), startOfNextDay(now));
+            throw limitExceeded(LimitType.DAILY_REQUESTS, dayCounter.getRequestCount(), settings.getDailyRequestCap(), companyClock.toServer(branch.getCompany(), startOfNextDay(now)));
         }
         if (monthCounter.getRequestCount() > settings.getMonthlyRequestCap()) {
-            throw limitExceeded(LimitType.MONTHLY_REQUESTS, monthCounter.getRequestCount(), settings.getMonthlyRequestCap(), startOfNextMonth(now));
+            throw limitExceeded(LimitType.MONTHLY_REQUESTS, monthCounter.getRequestCount(), settings.getMonthlyRequestCap(), companyClock.toServer(branch.getCompany(), startOfNextMonth(now)));
         }
         if (monthCounter.getEstimatedTokens() > settings.getMonthlyTokenCap()) {
-            throw limitExceeded(LimitType.MONTHLY_TOKENS, monthCounter.getEstimatedTokens(), settings.getMonthlyTokenCap(), startOfNextMonth(now));
+            throw limitExceeded(LimitType.MONTHLY_TOKENS, monthCounter.getEstimatedTokens(), settings.getMonthlyTokenCap(), companyClock.toServer(branch.getCompany(), startOfNextMonth(now)));
         }
 
         return new Reservation(branchId, dayKey, monthKey, estimatedTokens);
@@ -161,7 +162,7 @@ public class AiUsageGuardService {
         Branch branch = branchRepo.findById(branchId)
                 .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + branchId));
         AiBranchSettings settings = branchSettingsService.resolveEffective(branchId);
-        LocalDateTime now = scheduleService.nowInCompanyZone(branch.getCompany());
+        LocalDateTime now = companyClock.now(branch.getCompany()); // D15: company-local day and month keys
         String dayKey = now.format(DAY_FMT);
         String monthKey = now.format(MONTH_FMT);
 
@@ -217,6 +218,8 @@ public class AiUsageGuardService {
                 type, current, cap, resetsAt);
     }
 
+    // resetsAt (module 18 part 2, D15): computed on the company's calendar, returned as server wall-clock like
+    // every timestamp so the FE companyDate pipe shows the company's midnight.
     private LocalDateTime startOfNextDay(LocalDateTime now) {
         return now.toLocalDate().plusDays(1).atStartOfDay();
     }

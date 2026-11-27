@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class AiProviderConfigService {
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
     private final AiMeteredCalls meteredCalls;
 
     private final TenantAccess access;
@@ -124,9 +125,15 @@ public class AiProviderConfigService {
         configRepo.deleteById(id);
     }
 
-    @Transactional(readOnly = true)
+    /** Module 18 P1 part 2 (CLAUDE.md hard rule 2): the config is read in a short read; the provider call runs with none open. */
     public AiTestConnectionResult testConnection(Long id) {
-        AiProviderConfig config = access.record(AiProviderConfig.class, id);
+        var read = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        read.setReadOnly(true);
+        AiProviderConfig config = read.execute(st -> {
+            AiProviderConfig c = access.record(AiProviderConfig.class, id);
+            c.getApiKey(); // loaded now: used detached for the call
+            return c;
+        });
         try {
             AiChatResponse response = meteredCalls.chat("CONNECTION_TEST", clientFor(config.getProvider()), config, AiChatRequest.builder()
                     .systemPrompt("Reply with exactly one word: OK")

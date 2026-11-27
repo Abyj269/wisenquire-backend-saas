@@ -42,6 +42,7 @@ public final class Matrix {
         all.addAll(WhatsAppScheduleRows.specs());
         all.addAll(SavedReplyRows.specs());
         all.addAll(AutomationRows.specs());
+        all.addAll(AiRows.specs());
         return all;
     }
 
@@ -51,7 +52,9 @@ public final class Matrix {
      */
     public static final List<com.leads.flags.FeatureFlag> FLAGS_ON = List.of(com.leads.flags.FeatureFlag.LEAD_SETTINGS_COMPANY_WIDE_WRITES,
             com.leads.flags.FeatureFlag.PRODUCTS_COMPANY_WIDE_WRITES,
-            com.leads.flags.FeatureFlag.DELIVERY_SETTINGS_COMPANY_WIDE_WRITES);
+            com.leads.flags.FeatureFlag.DELIVERY_SETTINGS_COMPANY_WIDE_WRITES,
+            // Module 18: the matrix runs the short-transaction AI paths (their scope checks are the new code).
+            com.leads.flags.FeatureFlag.AI_SHORT_TRANSACTIONS);
 
     public static void flagsOn(com.leads.flags.FeatureFlags flags, com.leads.it.fixture.TenantFixture f) {
         for (var flag : FLAGS_ON) for (char o : new char[]{'A', 'B', 'S', 'P'}) flags.setOverride(flag, f.org(o), true, "it-test", "isolation matrix");

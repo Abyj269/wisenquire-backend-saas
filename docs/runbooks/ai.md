@@ -25,3 +25,19 @@ DELETE FROM feature_flag_overrides WHERE flag_key = 'ai.short_transactions' AND 
 - No load-test tooling or L7 baseline exists in the repos yet.
 - The in-repo stand-in is `AiShortTransactionsIT`: 10 parallel calls in one branch with a 1 s provider finish in under 5 s with the flag ON (serialised OFF: about 1 s per call).
 - Run the real L7 mix on staging once load tooling is in place, and record the baseline there.
+
+## AI model rates are platform-owned (P1 part 2, D9)
+- Table `platform_ai_model_rates (provider, model_name)` (V81), filled at migration with the **highest** rate each model had in any company.
+- The usage ledger prices new calls from it; a model with no platform rate still uses the old per-company rate (`ai_model_rates`, kept for one release).
+- Only the platform super admin can change rates (`PUT /ai/settings/usage-report/rates`); tenant admins get 403 and see the rates read-only.
+
+```sql
+SELECT * FROM platform_ai_model_rates ORDER BY provider, model_name;
+INSERT INTO platform_ai_model_rates (provider, model_name, input_per_million, output_per_million) VALUES ('OPENAI','<model>',<in>,<out>)
+  ON DUPLICATE KEY UPDATE input_per_million = VALUES(input_per_million), output_per_million = VALUES(output_per_million);
+```
+
+## Usage report days (T-2)
+- `ai_call_usage.started_at` is stored in UTC. The report converts the company's local days to UTC bounds and groups rows by the company day; the response says which timezone (`timezone`).
+- Totals for a day now match the company's calendar; older reports viewed before this change were 4 h (Dubai) or 5 h 30 (India) off.
+

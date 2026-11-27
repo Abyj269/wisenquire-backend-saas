@@ -19,7 +19,10 @@ public class AiUsageLedger {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Ticket start(AiProviderConfig config, String model, String feature) {
-        var rates = jdbc.query("SELECT input_per_million,output_per_million FROM ai_model_rates WHERE company_id=? AND provider=? AND model_name=?",
+        // Module 18 P1 part 2 (D9): platform-owned rates; a model with no platform rate falls back to the old company rate.
+        var rates = jdbc.query("SELECT input_per_million,output_per_million FROM platform_ai_model_rates WHERE provider=? AND model_name=?",
+                (rs, row) -> new BigDecimal[]{rs.getBigDecimal(1), rs.getBigDecimal(2)}, config.getProvider().name(), model);
+        if (rates.isEmpty()) rates = jdbc.query("SELECT input_per_million,output_per_million FROM ai_model_rates WHERE company_id=? AND provider=? AND model_name=?",
                 (rs, row) -> new BigDecimal[]{rs.getBigDecimal(1), rs.getBigDecimal(2)}, config.getCompany().getId(), config.getProvider().name(), model);
         BigDecimal input = rates.isEmpty() ? null : rates.get(0)[0];
         BigDecimal output = rates.isEmpty() ? null : rates.get(0)[1];

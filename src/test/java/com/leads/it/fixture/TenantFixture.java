@@ -241,6 +241,51 @@ public class TenantFixture {
         });
     }
 
+    /** Module 18: an AI provider of {@code type} on {@code s}'s branch (not selected unless it is the first); returns its id. */
+    public Long ensureAiProvider(Slot s, AiProviderType type) {
+        ensureAiProvider(s);
+        return inTx(() -> {
+            var existing = em.createQuery("SELECT c FROM AiProviderConfig c WHERE c.branch.id = :b AND c.provider = :t", AiProviderConfig.class)
+                    .setParameter("b", branchId.get(s)).setParameter("t", type).getResultList();
+            if (!existing.isEmpty()) return existing.get(0).getId();
+            return persist(AiProviderConfig.builder().company(companyRef(s)).branch(em.getReference(Branch.class, branchId.get(s)))
+                    .provider(type).modelName(type.name().toLowerCase() + "-it").apiKey("it-not-a-real-key").isActive(true).isSelected(false).build()).getId();
+        });
+    }
+
+    /** Module 18: gives a message a Meta media id (voice notes). */
+    public void setMedia(Long messageId, String mediaId, String mime) {
+        inTx(() -> { WhatsAppMessage m = em.find(WhatsAppMessage.class, messageId); m.setMediaId(mediaId); m.setMediaMimeType(mime); return null; });
+    }
+
+    /** Module 18: a cached translation of message {@code messageId}, made by {@code s}'s org admin. */
+    public Long freshTranslation(Slot s, Long messageId) {
+        return inTx(() -> {
+            WhatsAppMessageTranslation t = new WhatsAppMessageTranslation();
+            t.setMessage(em.getReference(WhatsAppMessage.class, messageId));
+            t.setCompany(companyRef(s));
+            t.setSourceLanguage("es");
+            t.setTranslatedText("hello");
+            t.setProvider("OPENAI");
+            t.setModelName("gpt-it");
+            t.setGeneratedByUser(em.getReference(User.class, userId.get(s.org() + ":" + Persona.ORG_ADMIN)));
+            return persist(t).getId();
+        });
+    }
+
+    /** Module 18: a cached conversion score for lead {@code leadId}. */
+    public Long freshLeadScore(Long leadId) {
+        return inTx(() -> {
+            Lead lead = em.find(Lead.class, leadId);
+            User someone = em.createQuery("SELECT u FROM User u WHERE u.organization.id = :o ORDER BY u.id", User.class)
+                    .setParameter("o", lead.getCompany().getOrganization().getId()).setMaxResults(1).getSingleResult();
+            return persist(LeadConversionScore.builder().lead(lead).company(lead.getCompany()).score(60).strengthLabel("MEDIUM")
+                    .rationale("IT").basedOnMessageCount(1).generatedByUser(someone).generatedAt(java.time.LocalDateTime.now()).build()).getId();
+        });
+    }
+
+    public String leadNumber(Long leadId) { return inTx(() -> em.find(Lead.class, leadId).getLeadNumber()); }
+
     /** Module 18: a text (or audio) inbound message in conversation {@code conversationId}. */
     public Long freshInboundMessage(Long conversationId, String type, String body) {
         return inTx(() -> persist(WhatsAppMessage.builder().conversation(em.getReference(WhatsAppConversation.class, conversationId))

@@ -43,7 +43,7 @@ class IsolationMatrixIT extends AbstractIntegrationTest {
 
     /** Module 13: default Meta answers for the template rows (the Graph @MockBean is reset after each row). */
     @org.junit.jupiter.api.BeforeEach
-    void stubGraph() { WhatsAppTemplateRows.stubGraph(graphApi); }
+    void stubGraph() { WhatsAppTemplateRows.stubGraph(graphApi); AiRows.stub(aiCalls, graphApi); }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
