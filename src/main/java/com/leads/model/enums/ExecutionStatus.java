@@ -5,5 +5,7 @@ public enum ExecutionStatus {
     COMPLETED,
     FAILED,
     WAITING,
-    CANCELLED
+    CANCELLED,
+    /** Module 17 P1: not run because the automation executor's queue was full. */
+    SKIPPED_QUEUE_FULL
 }

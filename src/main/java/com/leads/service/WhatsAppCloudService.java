@@ -133,7 +133,7 @@ public class WhatsAppCloudService {
                         // Hand off after the inbound transaction has committed, by id -
                         // the engine runs on its own thread and reloads everything.
                         if (stored[0]) {
-                            try { messageRepo.findByWamid(msg.getId()).ifPresent(saved -> automationEngineService.onIncomingWhatsAppMessage(saved.getId())); }
+                            try { messageRepo.findByWamid(msg.getId()).ifPresent(saved -> handOffToAutomations(saved.getId())); }
                             catch (RuntimeException ex) { log.warn("Automation hand-off failed for inbound {}: {}",msg.getId(),ex.getMessage()); }
                         }
                     }
@@ -338,6 +338,21 @@ public class WhatsAppCloudService {
     private boolean isLeadClosed(Lead lead) {
         return Boolean.TRUE.equals(lead.getIsConverted())
                 || (lead.getStatus() != null && java.util.Set.of(StageType.CONVERTED, StageType.LOST, StageType.CLOSED).contains(lead.getStatus().getStageType()));
+    }
+
+    /**
+     * Module 17 P1: hands an inbound message to the automation engine (async). When the executor's queue is
+     * full the hand-off is refused; the engine then records a SKIPPED_QUEUE_FULL execution instead of the
+     * event being lost with only a log line.
+     */
+    void handOffToAutomations(Long messageId) {
+        try {
+            automationEngineService.onIncomingWhatsAppMessage(messageId);
+        } catch (org.springframework.core.task.TaskRejectedException ex) {
+            log.warn("Automation executor queue full; recording skipped runs for message {}", messageId);
+            try { automationEngineService.recordQueueFull(messageId); }
+            catch (RuntimeException e) { log.warn("Could not record skipped automations for message {}: {}", messageId, e.getMessage()); }
+        }
     }
 
     /**

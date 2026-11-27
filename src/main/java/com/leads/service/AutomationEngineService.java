@@ -61,7 +61,7 @@ public class AutomationEngineService {
     /** What the engine needs from the inbound message, captured once inside a transaction. */
     record Inbound(Long conversationId, Long companyId, String messageType, String body, String customerWaId,
                    String customerName, String customerEmail, Long customerId, String businessName,
-                   boolean newConversation, boolean withinBusinessHours) {}
+                   boolean newConversation, boolean withinBusinessHours, Long organizationId) {}
 
     record Matched(Long id, String name, String triggerType, String actionsJson, boolean stopOnMatch) {}
 
@@ -79,36 +79,88 @@ public class AutomationEngineService {
         }
         if (inbound == null || matched.isEmpty()) return;
 
-        // Retrieve Company conflict resolution strategy: FIRST_MATCH (default) or RUN_ALL
+        List<Matched> toRun = selectRuns(matched, inbound.companyId());
+        // Module 17 P1 (F-3): the run happens on an executor thread handed off from the webhook, which has no
+        // tenant scope; run it as the triggering conversation's company, with orgId in the log context.
+        withTenant(inbound, () -> {
+            for (Matched automation : toRun) {
+                try {
+                    execute(automation, inbound);
+                } catch (RuntimeException e) {
+                    log.error("Automation {} failed for conversation {}: {}", automation.id(), inbound.conversationId(), e.getMessage(), e);
+                }
+            }
+        });
+        if (toRun.size() < matched.size()) {
+            log.info("Skipped {} subsequent matching automation(s) for conversation {} due to the conflict resolution policy",
+                    matched.size() - toRun.size(), inbound.conversationId());
+        }
+    }
+
+    /**
+     * Which of the matched automations run, in order: all of them with the company strategy RUN_ALL, else
+     * up to and including the first one (FIRST_MATCH, the default); an automation with stopOnMatch also
+     * ends the list.
+     */
+    List<Matched> selectRuns(List<Matched> matched, Long companyId) {
         String strategy = "FIRST_MATCH";
         try {
-            var settings = companyLeadSettingsRepo.findByCompanyId(inbound.companyId()).orElse(null);
+            var settings = companyLeadSettingsRepo.findByCompanyId(companyId).orElse(null);
             if (settings != null && settings.getAutomationConflictStrategy() != null) {
                 strategy = settings.getAutomationConflictStrategy();
             }
         } catch (Exception ex) {
-            log.warn("Could not determine automation conflict strategy for company {}: {}", inbound.companyId(), ex.getMessage());
+            log.warn("Could not determine automation conflict strategy for company {}: {}", companyId, ex.getMessage());
         }
-
         boolean isFirstMatchOnly = !"RUN_ALL".equalsIgnoreCase(strategy);
-
-        for (int i = 0; i < matched.size(); i++) {
-            Matched automation = matched.get(i);
-            try {
-                execute(automation, inbound);
-            } catch (RuntimeException e) {
-                log.error("Automation {} failed for conversation {}: {}", automation.id(), inbound.conversationId(), e.getMessage(), e);
-            }
-
-            // Conflict resolution: Stop subsequent matching automations if policy is FIRST_MATCH or if this automation has stopOnMatch enabled
-            if (isFirstMatchOnly || automation.stopOnMatch()) {
-                if (i < matched.size() - 1) {
-                    log.info("Automation '{}' (ID {}) executed. Skipping {} subsequent matching automation(s) due to conflict resolution policy (strategy={}, stopOnMatch={})",
-                            automation.name(), automation.id(), matched.size() - 1 - i, strategy, automation.stopOnMatch());
-                }
-                break;
-            }
+        List<Matched> out = new ArrayList<>();
+        for (Matched m : matched) {
+            out.add(m);
+            if (isFirstMatchOnly || m.stopOnMatch()) break;
         }
+        return out;
+    }
+
+    /** Runs {@code work} as the inbound message's company (TenantAccess) with its organization in TenantContext / MDC. */
+    private void withTenant(Inbound in, Runnable work) {
+        var previous = com.leads.config.TenantContext.get().orElse(null);
+        com.leads.config.TenantContext.set(new com.leads.config.TenantContext.Data(null, in.organizationId(), null));
+        try {
+            TenantAccess.inCompany(in.companyId(), work);
+        } finally {
+            if (previous != null) com.leads.config.TenantContext.set(previous); else com.leads.config.TenantContext.clear();
+        }
+    }
+
+    /**
+     * Module 17 P1: the automation executor refused the hand-off (its queue is full). Instead of losing the
+     * event, record a SKIPPED_QUEUE_FULL execution for every automation that would have run, so it shows in
+     * the automation's history. Runs on the caller's thread; nothing is sent.
+     */
+    public void recordQueueFull(Long messageId) {
+        List<Matched> matched = new ArrayList<>();
+        TransactionTemplate read = new TransactionTemplate(transactions);
+        read.setReadOnly(true);
+        Inbound inbound = read.execute(status -> collectMatches(messageId, matched));
+        if (inbound == null || matched.isEmpty()) return;
+        List<Matched> toRun = selectRuns(matched, inbound.companyId());
+        withTenant(inbound, () -> {
+            TransactionTemplate tx = new TransactionTemplate(transactions);
+            LocalDateTime now = LocalDateTime.now();
+            for (Matched automation : toRun) {
+                tx.executeWithoutResult(status -> executionRepo.save(AutomationExecution.builder()
+                        .automation(automationRepo.getReferenceById(automation.id()))
+                        .customer(inbound.customerId() != null ? customerRepo.getReferenceById(inbound.customerId()) : null)
+                        .customerPhone(truncate(inbound.customerWaId(), 30))
+                        .customerName(truncate(inbound.customerName(), 200))
+                        .status(ExecutionStatus.SKIPPED_QUEUE_FULL)
+                        .startedAt(now)
+                        .completedAt(now)
+                        .failureReason("Not run: too many messages at once (the automation queue was full).")
+                        .build()));
+                log.warn("Automation {} skipped for conversation {}: executor queue full", automation.id(), inbound.conversationId());
+            }
+        });
     }
 
     // -- Matching -------------------------------------------------------
@@ -145,7 +197,8 @@ public class AutomationEngineService {
                 customer != null ? customer.getId() : null,
                 company.getName(),
                 messageRepo.countByConversationIdAndDirection(conversation.getId(), MessageDirection.INBOUND) == 1,
-                conversation.getBranch() == null || scheduleService.isWithinWorkingHours(conversation.getBranch()));
+                conversation.getBranch() == null || scheduleService.isWithinWorkingHours(conversation.getBranch()),
+                company.getOrganization().getId());
 
         for (Automation a : candidates) {
             try {

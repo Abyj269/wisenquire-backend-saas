@@ -26,7 +26,8 @@ public class TenantFixture {
 
     private static final String[] MODULES = {"LEADS", "CUSTOMERS", "BROADCASTS", "WHATSAPP_LIVE_CHAT", "REPORTS_ANALYTICS", "QUOTATIONS", "DELIVERIES", "LEAD_SETTINGS", "PRODUCT_CATALOG", "WHATSAPP_TEMPLATES"};
     /** Tenant-admin rights (module 03): managers have them; agents do not, like the real "Agent" template. */
-    private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT"};
+    // Module 17: WHATSAPP_AUTOMATIONS is manager-only (doc assumption: OWN roles don't configure automations).
+    private static final String[] ADMIN_MODULES = {"COMPANY_BRANCH_SETTINGS", "ROLE_PERMISSION_MANAGEMENT", "USER_MANAGEMENT", "WHATSAPP_AUTOMATIONS"};
 
     private final EntityManager em;
     private final TransactionTemplate tx;
@@ -204,6 +205,29 @@ public class TenantFixture {
 
     public Long freshFailureReason(Slot s) {
         return inTx(() -> persist(DeliveryFailureReason.builder().company(companyRef(s)).reasonText("IT reason " + seq.incrementAndGet()).build()).getId());
+    }
+
+    /**
+     * Module 17: a fresh DRAFT automation on {@code s}'s branch (or company-level), publishable, triggered only by
+     * the exact keyword {@code keyword} (so it never fires on another test's messages once published).
+     */
+    public Long freshAutomation(Slot s, boolean companyLevel, String keyword) {
+        return inTx(() -> persist(Automation.builder()
+                .company(companyRef(s))
+                .branch(companyLevel ? null : em.getReference(Branch.class, branchId.get(s)))
+                .name("IT Automation " + seq.incrementAndGet())
+                .triggerType(TriggerType.KEYWORD)
+                .triggerJson("{\"keyword\":\"" + keyword + "\",\"matchType\":\"EXACT_MATCH\"}")
+                .actionsJson("[{\"type\":\"SEND_MESSAGE\",\"messageText\":\"IT automation reply\"}]")
+                .build()).getId());
+    }
+
+    /** Module 17: a finished execution of automation {@code automationId}. */
+    public Long freshAutomationExecution(Long automationId) {
+        return inTx(() -> persist(AutomationExecution.builder()
+                .automation(em.getReference(Automation.class, automationId))
+                .customerPhone("971500000000").customerName("IT Execution")
+                .status(ExecutionStatus.COMPLETED).startedAt(java.time.LocalDateTime.now()).build()).getId());
     }
 
     /** Module 15: a fresh saved reply of {@code s}'s company. */

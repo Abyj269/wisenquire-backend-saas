@@ -6,18 +6,6 @@
 # (EndpointCoverageIT.PENDING_CEILING); lower the ceiling whenever lines are removed.
 
 # --- module 02 auth-identity
-# --- module 17 automation
-DELETE /automations/{id}  # module 17 automation (AutomationController)
-GET /automations  # module 17 automation (AutomationController)
-GET /automations/{id}  # module 17 automation (AutomationController)
-GET /automations/{id}/analytics  # module 17 automation (AutomationController)
-GET /automations/{id}/executions  # module 17 automation (AutomationController)
-GET /automations/{id}/executions/{execId}  # module 17 automation (AutomationController)
-POST /automations  # module 17 automation (AutomationController)
-POST /automations/{id}/duplicate  # module 17 automation (AutomationController)
-POST /automations/{id}/pause  # module 17 automation (AutomationController)
-POST /automations/{id}/publish  # module 17 automation (AutomationController)
-PUT /automations/{id}  # module 17 automation (AutomationController)
 # --- module 18 ai
 DELETE /ai/settings/providers/{id}  # module 18 ai (AiSettingsController)
 GET /ai/leads/{leadNumber}/conversion-score  # module 18 ai (AiAssistantController)

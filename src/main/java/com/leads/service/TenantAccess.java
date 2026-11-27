@@ -38,6 +38,9 @@ public class TenantAccess {
         return () -> inCompany(captured, task);
     }
 
+    /** Module 17: the company a background run is scoped to (null on a user request); for diagnostics and tests. */
+    public static Long systemCompanyId() { return SYSTEM_COMPANY.get(); }
+
     static void inCompany(Long companyId, Runnable work) {
         Long previous = SYSTEM_COMPANY.get();
         try { SYSTEM_COMPANY.set(Objects.requireNonNull(companyId)); work.run(); }
