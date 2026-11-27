@@ -20,6 +20,12 @@ class MigrateMainTest {
         assertTrue(url.startsWith("jdbc:mysql://h:3306/wisenquire_db_new?sslMode=REQUIRED"));
     }
 
+    @Test void outOfOrderIsOnLikeTheAppProfiles() { // Step 6.3: V60-V64 after V110 were refused without it
+        var cfg = MigrateMain.configure("jdbc:mysql://x/y", "u", "p");
+        assertTrue(cfg.isOutOfOrder());
+        assertEquals("classpath:db/migration", cfg.getLocations()[0].getDescriptor());
+    }
+
     @Test void explicitUrlWins() {
         assertEquals("jdbc:mysql://x/y", MigrateMain.jdbcUrl(Map.of("DB_URL", "jdbc:mysql://x/y", "DB_HOST", "ignored")));
     }

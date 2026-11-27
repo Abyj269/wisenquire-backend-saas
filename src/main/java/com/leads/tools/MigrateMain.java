@@ -33,16 +33,24 @@ public final class MigrateMain {
         // Must be set; may be empty (e.g. a local XAMPP root account). Prod always sets a real one.
         String password = env.get("DB_PASSWORD");
         if (password == null) throw new IllegalStateException("Missing required environment variable DB_PASSWORD");
-        MigrateResult result = Flyway.configure()
-                .dataSource(url, user, password)
-                .locations(LOCATIONS)
-                .load()
-                .migrate();
+        MigrateResult result = configure(url, user, password).load().migrate();
         System.out.printf("Flyway: %d migration(s) applied; schema now at version %s%n",
                 result.migrationsExecuted, result.targetSchemaVersion);
         if (!result.success) {
             System.exit(1);
         }
+    }
+
+    /**
+     * Same Flyway settings as the app profiles. Out-of-order is ON (00-INDEX, owner decision A, 2026-11-25): module
+     * blocks are applied out of number order (V110 ran before V60), so without it this step refuses every lower
+     * version added later (found in Step 6.3: V62-V64 were refused on staging).
+     */
+    static org.flywaydb.core.api.configuration.FluentConfiguration configure(String url, String user, String password) {
+        return Flyway.configure()
+                .dataSource(url, user, password)
+                .locations(LOCATIONS)
+                .outOfOrder(true);
     }
 
     /** Same options as application-prod.yml so the migrate step talks to the DB exactly like the app. */

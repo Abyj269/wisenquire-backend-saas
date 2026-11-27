@@ -76,6 +76,8 @@ services:
       WHATSAPP_CLOUDAPI_BASEURL: http://meta-mock:8080/v20.0
       ADS_META_BASEURL: http://meta-mock:8080/v20.0
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+      # Step 6.3: access-token lifetime with flag auth.refresh_tokens on (15 min); scripts/e2e-auth.sh shortens it.
+      APP_SECURITY_JWT_ACCESSEXPIRATIONMS: ${STAGING_ACCESS_TOKEN_MS:-900000}
     volumes:
       - media-cache:/app/whatsapp-media-cache
     depends_on:

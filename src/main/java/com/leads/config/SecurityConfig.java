@@ -104,6 +104,8 @@ public class SecurityConfig {
                                 "/auth/logout", "/api/v1/auth/logout",
                                 "/public/password-reset", "/api/v1/public/password-reset",
                                 "/public/password-reset/confirm", "/api/v1/public/password-reset/confirm",
+                                // Step 6.3: CSP violation reports from browsers (always 204, rate-limited, no tenant data).
+                                "/public/csp-report", "/api/v1/public/csp-report",
                                 // Step 6.2: bounce/complaint notices, authenticated by their HMAC signature.
                                 "/email/webhook/bounce", "/api/v1/email/webhook/bounce",
                                 "/whatsapp/webhook", "/api/v1/whatsapp/webhook",

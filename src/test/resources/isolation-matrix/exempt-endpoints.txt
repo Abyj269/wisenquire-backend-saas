@@ -10,3 +10,4 @@ POST /auth/logout  # public by design: revokes the login of the given refresh to
 POST /public/password-reset  # public by design: always 202, never reveals whether an account exists; rate-limited (module 02 P2)
 POST /public/password-reset/confirm  # public by design: authenticated by a single-use, 30-minute reset token (module 02 P2)
 POST /email/webhook/bounce  # public by design: authenticated by an HMAC-SHA256 signature over the body; off without a secret; no tenant data (Step 6.2)
+POST /public/csp-report  # public by design: browsers send CSP violation reports without credentials; always 204, rate-limited, stores origins and paths only, no tenant data (Step 6.3)

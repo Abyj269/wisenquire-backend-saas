@@ -85,7 +85,8 @@ class PersonaFixtureIT extends AbstractIntegrationTest {
         // this number together with the matrix rows or the pending list.
         // Module 02 P2 (Step 6.1): + POST /auth/refresh, /auth/logout, /public/password-reset(/confirm) = 193 (exempt-endpoints.txt).
         // Step 6.2: + POST /email/webhook/bounce = 194.
-        assertEquals(194, EndpointCatalog.discover(mappings).size());
+        // Step 6.3: + POST /public/csp-report = 195.
+        assertEquals(195, EndpointCatalog.discover(mappings).size());
     }
 
 

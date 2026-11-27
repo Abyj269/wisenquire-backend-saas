@@ -6,7 +6,7 @@
 - Nothing else changes: the signed-in identity is still the user's email inside the app (permissions, the per-user chat queue, logs).
 
 ## Refresh tokens: `auth.refresh_tokens` (default OFF, per org)
-- **Keep it OFF until the frontend refresh step ships.** Without the frontend's silent refresh, users would be signed out every 15 minutes.
+- **The frontend refresh shipped in Step 6.3** (FE `saas/02-auth-identity-P2`). Turn the flag on for an org only once that frontend build is deployed; with an older frontend its users would be signed out every 15 minutes.
 - **ON:** login answers a **15-minute** access token (`app.security.jwt.access-expiration-ms`) plus a **7-day** refresh token (`app.security.jwt.refresh-expiration-ms`). **OFF:** a 24-hour access token and no refresh token, as before.
 - `POST /auth/refresh {refreshToken}` returns a new access token and a **new** refresh token; the old one stops working. The table is `refresh_tokens` (V60) and stores only a SHA-256 hash of each token.
 - **A login ends** (401 `SESSION_REVOKED`, the user signs in again) when:
@@ -32,7 +32,7 @@ UPDATE refresh_tokens SET revoked_at = NOW(6) WHERE user_id = <id> AND revoked_a
   - Rate limits: 10 requests per 15 minutes per IP, 3 per address.
 - `POST /public/password-reset/confirm {token, newPassword}`: 204 on success; the password must be 8–128 characters; every session of the user ends. 400 `VALIDATION_FAILED` for a bad, used or expired link.
 - **Set `APP_PUBLIC_URL`** on every deployment to the address users open the app at; the default is `http://localhost:4200`.
-- The frontend page `/reset-password` arrives in a later Phase 2 step; until then a link opens the app without that page.
+- Frontend pages (Step 6.3): `/forgot-password`, and `/reset-password?token=…` (also `/reset-password/<token>`). The page removes the token from the address bar at once.
 
 ## Email outbox and templates (Step 6.2, no flag)
 - **Templates** (`src/main/resources/templates/email/`, HTML + text each): OTP, VERIFY_EMAIL, INVITE, PASSWORD_RESET, TRIAL_EXPIRING, PAYMENT_FAILED, INVOICE_ISSUED. Today only OTP and PASSWORD_RESET are sent; the others are ready for later modules. Product name: `APP_MAIL_PRODUCT_NAME` (default WiseNquire).
@@ -56,3 +56,30 @@ UPDATE email_outbox SET status = 'PENDING', attempts = 0, next_attempt_at = NOW(
 DELETE FROM email_suppressions WHERE address = LOWER('<address>');
 ```
 - **Rollback:** the outbox only carries the password reset today. Stopping the job (`email.outbox.check-ms` very high) holds emails as `PENDING`; they go out when it runs again.
+
+## Frontend session (Step 6.3)
+- **Mode follows the flag.** With `auth.refresh_tokens` ON the login answer has a refresh token, and the browser keeps:
+  - the access token **in memory only** (`localStorage` has no `wisenquire_token`);
+  - the refresh token in `localStorage` (`wisenquire_refresh`), the only token there.
+  With the flag OFF nothing changes: the 24-hour token stays in `localStorage` as before.
+- **Refresh:** each tab refreshes at 80% of the access token's life (12 of 15 minutes). Only one tab rotates at a time (browser lock `wisenquire-refresh`); the others get the new access token over `BroadcastChannel` `wisenquire-session`. A request that gets a 401 waits for that refresh and is sent once more. A failed refresh signs the user out (`/login?expired=1`).
+- **New tab or reload:** asks the open tabs for the access token first (150 ms), else refreshes.
+- **Logout** in one tab signs out every tab, ends the login on the server (`POST /auth/logout`) and drops cached WhatsApp media.
+- **Check in a browser:** DevTools > Application > Local Storage: with the flag on, only `wisenquire_refresh` holds a token.
+- **E2E:** `deploy/staging/scripts/e2e-auth.sh [email]` (2 tabs: login, silent refresh, logout). One-time: in the frontend repo `npm install` and `npx playwright install chromium`.
+
+## Content-Security-Policy (Step 6.3, report-only)
+- The frontend image (nginx) sends `Content-Security-Policy-Report-Only` with the plan §11 policy, plus `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and HSTS, on every page (`docker/security-headers.inc.template`). Nothing is blocked yet.
+- Image settings:
+  - `CSP_REPORT_URI` (default `/api/v1/public/csp-report`): where browsers send reports. Use the full API URL when the API is on another origin.
+  - `CSP_CONNECT_EXTRA` (default empty): extra `connect-src` sources when the API is on another origin, e.g. `https://api.example.com wss://api.example.com`.
+- **Another web server** (not this image): send the same header lines as `security-headers.inc.template`, with both values filled in, on every HTML response.
+- Reports land in `csp_reports` (V64) through `POST /public/csp-report` (public; always 204; 16 KB and 60 per minute per IP; origins and paths only, ids become `{id}`, long tokens `{token}`).
+
+```sql
+-- what the policy would block, most frequent first
+SELECT directive, blocked, document_path, disposition, hits, first_seen, last_seen FROM csp_reports ORDER BY hits DESC LIMIT 50;
+-- new sources in the last day
+SELECT directive, blocked, SUM(hits) FROM csp_reports WHERE last_seen > NOW() - INTERVAL 1 DAY GROUP BY directive, blocked ORDER BY 3 DESC;
+```
+- **Enforce** after 2 weeks with no report for a legitimate source: add the missing sources to the policy, then rename the header to `Content-Security-Policy`. **Rollback:** back to `-Report-Only`, or remove the include line.

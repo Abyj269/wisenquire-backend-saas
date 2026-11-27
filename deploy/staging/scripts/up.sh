@@ -12,6 +12,12 @@ fi
 echo "== Starting (migrate runs first; api waits for it)"
 compose up -d
 wait_healthy mysql 240
+# Step 6.3: a failed Flyway step must stop here (compose can leave the old API running and report success).
+for ((i = 0; i < 300; i += 3)); do
+  MIG="$(compose ps -a -q migrate)"; [[ -n "$MIG" ]] && [[ "$(docker inspect -f '{{.State.Status}}' "$MIG")" == exited ]] && break; sleep 3
+done
+MIG_EXIT="$(docker inspect -f '{{.State.ExitCode}}' "$MIG" 2>/dev/null || echo missing)"
+[[ "$MIG_EXIT" == 0 ]] || { echo "Flyway migrate step failed (exit $MIG_EXIT):" >&2; compose logs --tail 40 migrate >&2; exit 1; }
 wait_healthy api 420
 wait_healthy frontend 120
 echo
