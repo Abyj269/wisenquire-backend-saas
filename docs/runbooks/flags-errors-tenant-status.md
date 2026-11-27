@@ -26,7 +26,7 @@ UPDATE feature_flags SET enabled_default = 1 WHERE flag_key = '<key>';
 | Flag | Default | Owner | What it does when ON |
 |---|---|---|---|
 | `errors.uniform_not_found` | OFF | module 01 | Missing and out-of-scope records both return **404 NOT_FOUND** with the same message (fixes F-9). OFF: missing 400, out of scope 403, as before. Permission denials stay 403 either way. |
-| the 14 plan flags (`own_scope.*`, `auth.*`, `broadcast.*`, `webhook.async_inbox`, `reports.sql_v2`, `signup.public`, `wa.*`, `billing.*`, `branding.runtime`) | OFF | their modules | Nothing yet: each is read by its module when that module is converted |
+| *(see "Flag record" below for every flag)* | | | |
 
 **Rollback** for any flag: delete the override or set the default back to 0; effective within 60 s.
 
@@ -57,3 +57,35 @@ Every error body is now:
 ## Actor memo (Part B item 1)
 - The JWT filter loads the signed-in user once per request (with role, permissions and allowed companies/branches) and `TenantAccess.actor()` and `AuthService.getCurrentUser()` reuse it. STOMP: once per frame.
 - **Kill switch:** `APP_TENANT_ACTORMEMO_ENABLED=false` (environment) or `app.tenant.actor-memo.enabled=false`, then restart. Use it if anything behaves oddly right after a user's own access was edited, or on a `LazyInitializationException` mentioning `User`.
+
+## Flag record (Phase 1 close, 2026-11-27)
+Defaults are the `feature_flags.enabled_default` values shipped by the migrations. **Prod** = every existing client WAR and the SaaS live deployment: defaults only, no overrides until the owner turns a flag on per org.
+**Staging** = the seeded synthetic tenants. **Dev / IT** = defaults; the integration tests turn flags on per test, and the isolation matrix runs with the F-12 and AI flags ON.
+
+| Flag | Default (dev, prod) | Staging | Owner | Expires | In use since | ON means |
+|---|---|---|---|---|---|---|
+| `errors.uniform_not_found` | OFF | OFF | module-01 | 2027-06-30 | Step 5.2 | missing and out-of-scope records both 404 |
+| `errors.ui_handler` | OFF | OFF | module-01 | 2027-06-30 | Step 5.3 | global D12 error UI in the frontend |
+| `own_scope.enforced` | OFF | **ON** (seed, every org) | module-01 | 2027-12-31 | modules 06–12, 16, 18 | roles with data_scope OWN see only their own records |
+| `own_scope.include_unassigned` | OFF | OFF | module-01 | 2027-12-31 | modules 06, 12 | OWN users also see and may claim unassigned leads/chats |
+| `own_scope.customer_via_chats` | **ON** (V75) | ON | module-07 | 2027-12-31 | module 12 | OWN users also see customers through their chats (inert while `own_scope.enforced` is off) |
+| `tenant.timezone_allowlist` | OFF | OFF | module-03 | 2027-12-31 | module 03 | company timezones limited to the 7 year-1 zones |
+| `lead_settings.company_wide_writes` | OFF | OFF | module-04 | 2027-12-31 | modules 04, 15 | lead settings and saved-reply writes need company-wide scope |
+| `products.company_wide_writes` | OFF | OFF | module-05 | 2027-12-31 | module 05 | product writes need company-wide scope |
+| `delivery_settings.company_wide_writes` | OFF | OFF | module-09 | 2027-12-31 | module 09 | delivery settings writes need company-wide scope |
+| `documents.company_code_prefix` | OFF | OFF | module-06 | 2027-12-31 | module 06 | new document numbers carry the company's random code |
+| `broadcast.chunked_tx` | OFF | OFF | module-16 | 2027-06-30 | module 16 | chunked broadcast send, recovery, streamed audience |
+| `ai.short_transactions` | OFF | OFF | module-18 | 2027-06-30 | module 18 | no transaction or counter lock during AI provider calls |
+| `auth.subject_user_id` | OFF | OFF | module-02 | 2027-06-30 | not yet (Phase 2) | JWT subject is the user id |
+| `auth.refresh_tokens` | OFF | OFF | module-02 | 2027-06-30 | not yet (Phase 2) | refresh tokens |
+| `broadcast.queue_v2` | OFF | OFF | module-16 | 2027-12-31 | not yet (P5) | durable broadcast queue |
+| `webhook.async_inbox` | OFF | OFF | module-12 | 2027-12-31 | not yet (P5) | webhook inbox table |
+| `reports.sql_v2` | OFF | OFF | module-10 | 2027-12-31 | not yet (P5) | reports in SQL |
+| `signup.public` | OFF | OFF | module-20 | 2028-06-30 | not yet (Phase 2) | public signup |
+| `billing.enforce`, `billing.einvoice` | OFF | OFF | module-22 | 2028-06-30 | not yet (Phase 3) | entitlements enforced / India e-invoicing |
+| `wa.cost_display`, `wa.tenant_send_limit` | OFF | OFF | module-23 | 2028-06-30 | not yet (Phase 3) | WhatsApp cost display / tenant send limit |
+| `branding.runtime` | OFF | OFF | module-24 | 2028-06-30 | not yet (Phase 4) | runtime per-tenant branding |
+
+- Rule (DoD 3): a flag that has been ON for every org for 2 weeks is removed with its old code path. The two "kept for one release" rollbacks, `broadcast.chunked_tx` and `ai.short_transactions`, expire on 2027-06-30.
+- Check the live state: `SELECT f.flag_key, f.enabled_default, o.organization_id, o.enabled FROM feature_flags f LEFT JOIN feature_flag_overrides o ON o.flag_key = f.flag_key ORDER BY f.flag_key;`
+

@@ -105,34 +105,43 @@ class BroadcastChunkedSendIT extends AbstractIntegrationTest {
         assertNotNull(jdbc.queryForObject("SELECT last_heartbeat_at FROM broadcasts WHERE id = ?", java.sql.Timestamp.class, id), "heartbeat per chunk");
     }
 
+    /**
+     * Step 5.22 (owner decision A, at most once). The hard case: Meta ACCEPTS message 61, then the sender dies
+     * before saving it (like a pod killed mid-call). The recovery resumes the rest, but never sends that
+     * recipient again: it becomes UNCONFIRMED. Every number reaches Meta at most once.
+     */
     @Test
-    void aStoppedRunIsResumedByTheRecoveryWithOneWamidPerRecipient() throws Exception {
+    void aStoppedRunIsResumedWithZeroDoubleSends() throws Exception {
         chunkedOn();
         Long id = sendingBroadcast(120);
         AtomicInteger calls = new AtomicInteger();
         Map<String, Integer> accepted = new ConcurrentHashMap<>();
         when(graphApi.listTemplates(any())).thenReturn(List.of());
         when(graphApi.sendTemplateMessage(any(), anyString(), anyString(), anyString(), any())).thenAnswer(inv -> {
-            if (calls.incrementAndGet() == 61) throw new SimulatedCrash(); // in the middle of chunk 2
-            accepted.merge(inv.getArgument(1), 1, Integer::sum);
+            accepted.merge(inv.getArgument(1), 1, Integer::sum); // Meta accepted it
+            if (calls.incrementAndGet() == 61) throw new SimulatedCrash(); // ... and the sender dies before saving
             return "wamid.it-" + UUID.randomUUID();
         });
 
         assertThrows(SimulatedCrash.class, () -> impl.executeBroadcastSend(id));
         assertEquals("SENDING", status(id), "the stopped broadcast is left SENDING");
         assertEquals(60, count(id, "status = 'SENT'"));
-        assertTrue(count(id, "status = 'SENDING_ITEM' AND wamid IS NULL") > 0, "the claimed rest of chunk 2 was never sent");
+        assertEquals(1, count(id, "status = 'ATTEMPTING' AND wamid IS NULL"), "the recipient in flight is recorded as attempting");
+        assertTrue(count(id, "status = 'SENDING_ITEM' AND wamid IS NULL") > 0, "the claimed rest of chunk 2 was never started");
 
         assertFalse(broadcasts.resumeStalled(id), "a fresh heartbeat is not stalled");
         jdbc.update("UPDATE broadcasts SET last_heartbeat_at = last_heartbeat_at - INTERVAL 10 MINUTE WHERE id = ?", id);
         assertTrue(broadcasts.resumeStalled(id), "no heartbeat for 10 minutes: resumed");
         awaitCompleted(id);
 
-        assertEquals(120, count(id, "status = 'SENT' AND wamid IS NOT NULL"));
-        assertEquals(120, jdbc.queryForObject("SELECT COUNT(DISTINCT wamid) FROM broadcast_recipients WHERE broadcast_id = ?", Integer.class, id));
-        assertEquals(120, accepted.size());
-        assertTrue(accepted.values().stream().allMatch(c -> c == 1), "zero double-sends: " + accepted);
-        assertEquals(120, jdbc.queryForObject("SELECT sent_count FROM broadcasts WHERE id = ?", Integer.class, id));
+        assertEquals(119, count(id, "status = 'SENT' AND wamid IS NOT NULL"));
+        assertEquals(1, count(id, "status = 'UNCONFIRMED' AND wamid IS NULL AND error_message LIKE '%not resent%'"),
+                "the interrupted recipient is shown as not confirmed, not resent");
+        assertEquals(119, jdbc.queryForObject("SELECT COUNT(DISTINCT wamid) FROM broadcast_recipients WHERE broadcast_id = ?", Integer.class, id));
+        assertEquals(120, accepted.size(), "every number reached Meta");
+        assertTrue(accepted.values().stream().allMatch(c -> c == 1), "zero double sends: " + accepted);
+        assertEquals(120, calls.get(), "one Meta call per recipient, the interrupted one included");
+        assertEquals(119, jdbc.queryForObject("SELECT sent_count FROM broadcasts WHERE id = ?", Integer.class, id));
     }
 
     @Test

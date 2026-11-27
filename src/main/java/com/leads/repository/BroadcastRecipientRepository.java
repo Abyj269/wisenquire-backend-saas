@@ -37,7 +37,21 @@ public interface BroadcastRecipientRepository extends JpaRepository<BroadcastRec
     int markStatus(@org.springframework.data.repository.query.Param("ids") List<Long> ids,
                    @org.springframework.data.repository.query.Param("status") BroadcastRecipientStatus status);
 
-    /** Recovery: claimed recipients that were never sent (no wamid) go back to PENDING. */
+    /** Step 5.22: one claimed recipient's Meta call starts (only from SENDING_ITEM). */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE BroadcastRecipient r SET r.status = com.leads.model.enums.BroadcastRecipientStatus.ATTEMPTING "
+            + "WHERE r.id = :id AND r.broadcast.id = :broadcastId AND r.status = com.leads.model.enums.BroadcastRecipientStatus.SENDING_ITEM")
+    int markAttempting(@org.springframework.data.repository.query.Param("id") Long id,
+                       @org.springframework.data.repository.query.Param("broadcastId") Long broadcastId);
+
+    /** Step 5.22 (at most once): an attempt the sender never recorded becomes UNCONFIRMED and is not resent. */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE BroadcastRecipient r SET r.status = com.leads.model.enums.BroadcastRecipientStatus.UNCONFIRMED, "
+            + "r.errorMessage = :reason WHERE r.broadcast.id = :broadcastId AND r.status = com.leads.model.enums.BroadcastRecipientStatus.ATTEMPTING AND r.wamid IS NULL")
+    int markUnconfirmedAttempts(@org.springframework.data.repository.query.Param("broadcastId") Long broadcastId,
+                                @org.springframework.data.repository.query.Param("reason") String reason);
+
+    /** Recovery: claimed recipients whose Meta call never started (no wamid) go back to PENDING. */
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("UPDATE BroadcastRecipient r SET r.status = com.leads.model.enums.BroadcastRecipientStatus.PENDING "
             + "WHERE r.broadcast.id = :broadcastId AND r.status = com.leads.model.enums.BroadcastRecipientStatus.SENDING_ITEM AND r.wamid IS NULL")

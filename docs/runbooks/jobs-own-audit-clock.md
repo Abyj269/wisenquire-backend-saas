@@ -70,9 +70,9 @@ The only API for "today", date filters and day buckets in a company's timezone (
 
 ## Broadcast chunked send and recovery (module 16 P1)
 - Flag `broadcast.chunked_tx` (V52, default OFF), per org. **ON:** a broadcast is sent in chunks of 50 with no DB transaction during any Meta call; each recipient's result is saved right after its own call; `broadcasts.last_heartbeat_at` (V80) is stamped per chunk. **OFF:** the original single-transaction path (kept for one release as the rollback).
-- Recipient status `SENDING_ITEM` = claimed by the sender. It is normal during a run.
+- Recipient statuses during a run: `SENDING_ITEM` = claimed, its Meta call not started; `ATTEMPTING` = its Meta call has started. Both are normal while a broadcast sends.
 - **Recovery job** `broadcast-recovery`: a broadcast still `SENDING` with a heartbeat older than 5 minutes is resumed; claimed recipients without a wamid go back to `PENDING`, recipients with a wamid are never sent again. Only chunked runs (heartbeat set) are resumed: an old-path run that died rolled its results back, so resuming it would send everyone twice. Log lines: `[BROADCAST RECOVERY] Resuming broadcast ID …`.
-- **Known limit:** if a node dies in the instant after Meta accepted a message and before it was saved, that one recipient can receive it twice (Meta has no idempotency key). P5 (`broadcast.queue_v2`) narrows this further.
+- **At most once (Step 5.22, owner decision A):** the recovery never resends a recipient whose Meta call had started (`ATTEMPTING`, no wamid). It becomes `UNCONFIRMED` ("Sending was interrupted …; it was not resent, to avoid a duplicate"): Meta may or may not have delivered it. Expect at most one such recipient per broadcast per crash; there are never double sends. To send it again on purpose, use a new broadcast to that number.
 - **Stuck in SENDING on the old path (flag OFF):** unchanged from before; check `broadcast_recipients` and Meta before re-sending by hand.
 
 ```sql
@@ -82,4 +82,10 @@ DELETE FROM feature_flag_overrides WHERE flag_key = 'broadcast.chunked_tx' AND o
 -- broadcasts the recovery would pick up now (last_heartbeat_at is server wall-clock, Asia/Dubai; put the current Dubai time minus 5 minutes):
 SELECT id, company_id, last_heartbeat_at FROM broadcasts WHERE status = 'SENDING' AND deleted_at IS NULL AND last_heartbeat_at < '<dubai now - 5 min>';
 ```
+
+## Architecture test (fail mode since Step 5.22)
+- `ArchitectureReportTest` fails the build on any finding of rules (a) TenantAccess on id-taking service methods, (b) `findById` without a record check, (c) repositories in controllers, or (d) server-date calls, unless it is listed in `src/test/resources/architecture/allow-list.txt` as `finding || REASON || note`.
+- REASON codes are defined in the test (`TIMESTAMP`, `COMPANY_DAY_HELPER`, `SYSTEM_PATH`, `CHECKED_CALLER`, `CHECKED_OTHERWISE`). A new entry needs owner approval.
+- The test also fails on a stale entry: when you fix a finding, delete its line.
+- Every finding, allowed or not, is written to `target/architecture/violations.txt`.
 

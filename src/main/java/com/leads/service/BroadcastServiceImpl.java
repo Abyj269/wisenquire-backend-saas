@@ -320,6 +320,10 @@ public class BroadcastServiceImpl implements BroadcastService {
         String cleanPhone = com.leads.util.PhoneNumberUtil.lastSignificantDigits(r.phone());
         if (TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("A broadcast send must not run inside a DB transaction (hard rule 2).");
+        // Step 5.22 (owner decision A, at most once): record that the call starts. If the sender stops before
+        // the result is saved, the recovery marks this recipient UNCONFIRMED instead of sending it again.
+        Integer started = tx().execute(st -> recipientRepo.markAttempting(r.id(), broadcastId));
+        if (started == null || started == 0) return; // no longer claimed by this run (taken over or deleted)
         try {
             if (cleanPhone == null || cleanPhone.isBlank()) throw new IllegalArgumentException("Invalid or missing phone number: " + r.phone());
             BroadcastRecipient view = BroadcastRecipient.builder().recipientPhone(r.phone()).recipientName(r.name()).build();
@@ -367,7 +371,8 @@ public class BroadcastServiceImpl implements BroadcastService {
             Broadcast b = broadcastRepo.findById(broadcastId).orElse(null);
             if (b == null || b.getStatus() != BroadcastStatus.SENDING) return;
             long open = recipientRepo.countByBroadcastIdAndStatus(broadcastId, BroadcastRecipientStatus.PENDING)
-                    + recipientRepo.countByBroadcastIdAndStatus(broadcastId, BroadcastRecipientStatus.SENDING_ITEM);
+                    + recipientRepo.countByBroadcastIdAndStatus(broadcastId, BroadcastRecipientStatus.SENDING_ITEM)
+                    + recipientRepo.countByBroadcastIdAndStatus(broadcastId, BroadcastRecipientStatus.ATTEMPTING);
             if (open > 0) return;
             b.setStatus(BroadcastStatus.COMPLETED);
             b.setCompletedAt(companyClock.serverNow());
@@ -395,7 +400,11 @@ public class BroadcastServiceImpl implements BroadcastService {
                 b.setLastHeartbeatAt(companyClock.serverNow());
                 broadcastRepo.saveAndFlush(b); // @Version: a concurrent take-over fails here
                 int reset = recipientRepo.resetUnsentClaims(broadcastId);
-                log.warn("[BROADCAST RECOVERY] Resuming broadcast ID {} ({} claimed-but-unsent recipients back to PENDING)", broadcastId, reset);
+                // At most once (Step 5.22, owner decision A): a call that started but was never recorded is not resent.
+                int unconfirmed = recipientRepo.markUnconfirmedAttempts(broadcastId,
+                        "Sending was interrupted during this message; it was not resent, to avoid a duplicate. Meta may or may not have delivered it.");
+                log.warn("[BROADCAST RECOVERY] Resuming broadcast ID {} ({} claimed-but-unsent recipients back to PENDING, {} interrupted marked UNCONFIRMED)",
+                        broadcastId, reset, unconfirmed);
                 return true;
             });
         } catch (org.springframework.orm.ObjectOptimisticLockingFailureException ex) {

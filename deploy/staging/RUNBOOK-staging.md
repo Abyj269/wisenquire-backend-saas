@@ -101,3 +101,14 @@ Each service maps to a managed one; the app needs no code change, only environme
 | `mailpit` | A real SMTP provider (staging sender domain) |
 | `meta-mock` | Keep it: staging must never call Meta with real credentials |
 Terminate TLS at the load balancer and set `ALLOWED_ORIGINS` to the real staging origin.
+
+## Two-instance job check (Step 5.22)
+- Purpose: prove every scheduled job runs once per tick with two API instances (ShedLock).
+- Run (Git Bash, staging up from the current code via `scripts/up.sh`): `bash scripts/two-instances-check.sh [seconds]` (default 300).
+- What it does:
+  1. Starts a second API from `docker-compose.two-instances.yml` (management port 19091, fast job intervals).
+  2. Reads `jobs_runs_total` from both instances over the window.
+  3. Checks each job's total against one run per lock (`lockAtLeastFor`), and checks that the credential migration ran once.
+  4. Returns staging to one instance.
+- Exit 0 = PASS. Evidence: `target/staging-evidence/two-instances-<timestamp>.txt` (backend repo; copy it elsewhere before the next `mvn clean`).
+

@@ -180,8 +180,13 @@ public final class StagingSeed {
         Role orgAdmin = role(org, "Org Admin", RoleLevel.ORGANIZATION, m -> true);
         Role companyMgr = role(org, "Company Manager", RoleLevel.COMPANY, m -> true);
         Role branchMgr = role(org, "Branch Manager", RoleLevel.BRANCH, m -> !m.startsWith("ROLE_") && !m.equals("USER_MANAGEMENT"));
-        // "Agent" template: BRANCH level. D14 adds data_scope=OWN (01 Part B item 8); until then agents see the whole branch.
+        // "Agent" template: BRANCH + OWN (D14). Phase 1 DoD: own_scope.enforced is ON for the staging tenants
+        // (synthetic; there is no migrated legacy tenant on staging), so agents see only their own records.
         Role agent = role(org, "Agent", RoleLevel.BRANCH, AGENT_MODULES::contains);
+        agent.setDataScope(com.leads.model.enums.DataScope.OWN);
+        em.flush();
+        jdbc.update("INSERT INTO feature_flag_overrides (flag_key, organization_id, enabled, set_by, reason) VALUES (?, ?, 1, ?, ?)",
+                "own_scope.enforced", org.getId(), "staging-seed", "Phase 1 DoD: OWN enforced for staging tenants");
         user(org, orgAdmin, "org.admin@" + tc + ".staging.test", "Org", "Admin", List.of(), List.of(), tc, "ORG_ADMIN", "", "", "");
 
         List<CompanyRef> refs = new ArrayList<>();
