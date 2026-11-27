@@ -83,7 +83,8 @@ class PersonaFixtureIT extends AbstractIntegrationTest {
     void discoveryFindsEveryApplicationEndpoint() {
         // 01 §7 / plan D3: 188 mappings at v3.1, + GET /me/feature-flags (Step 5.1) = 189. When an endpoint is added or removed, update
         // this number together with the matrix rows or the pending list.
-        assertEquals(189, EndpointCatalog.discover(mappings).size());
+        // Module 02 P2 (Step 6.1): + POST /auth/refresh, /auth/logout, /public/password-reset(/confirm) = 193 (exempt-endpoints.txt).
+        assertEquals(193, EndpointCatalog.discover(mappings).size());
     }
 
 

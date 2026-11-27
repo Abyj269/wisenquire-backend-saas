@@ -98,7 +98,12 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/auth/login", "/api/v1/auth/login",
                                 "/auth/verify-otp", "/api/v1/auth/verify-otp",
-                                // "/auth/refresh" removed (F-7): no such endpoint exists until module 02 adds it.
+                                // Module 02 P2: refresh and logout authenticate with the refresh token itself; the
+                                // password reset is public by design (always 202 / single-use token).
+                                "/auth/refresh", "/api/v1/auth/refresh",
+                                "/auth/logout", "/api/v1/auth/logout",
+                                "/public/password-reset", "/api/v1/public/password-reset",
+                                "/public/password-reset/confirm", "/api/v1/public/password-reset/confirm",
                                 "/whatsapp/webhook", "/api/v1/whatsapp/webhook",
                                 // Liveness/readiness probes (Actuator). Only "health" is exposed by
                                 // default (application.yml), and it shows no details.

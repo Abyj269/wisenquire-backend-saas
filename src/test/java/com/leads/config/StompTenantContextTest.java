@@ -30,7 +30,7 @@ class StompTenantContextTest {
 
     @BeforeEach void validToken() {
         when(tokens.validateToken("tok")).thenReturn(true);
-        when(tokens.getEmailFromToken("tok")).thenReturn("agent@example.test");
+        when(tokens.getSubject("tok")).thenReturn(new JwtTokenProvider.Subject(null, "agent@example.test")); // module 02 P2
         when(tokens.getSessionVersion("tok")).thenReturn(0L);
         when(tokens.getContextClaims("tok")).thenReturn(new TenantContext.Data(11L, 4L, "BRANCH"));
         UserBuilder principal = org.springframework.security.core.userdetails.User.withUsername("agent@example.test").password("x").authorities(List.of());

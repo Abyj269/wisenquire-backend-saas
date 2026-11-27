@@ -37,6 +37,23 @@ public class AuthController {
         return ResponseEntity.ok(authService.login(loginRequest, resolveClientIp(request)));
     }
 
+    /** Module 02 P2 request body for refresh and logout. */
+    public record RefreshRequest(String refreshToken) { }
+
+    @PostMapping("/refresh")
+    @Operation(summary = "Refresh the session", description = "Exchanges a refresh token for a new access token and a new refresh token (the old one stops working). "
+            + "Only for organizations with auth.refresh_tokens on. A reused, expired or revoked token answers 401 SESSION_REVOKED and ends that login.")
+    public ResponseEntity<AuthResponse> refresh(@RequestBody RefreshRequest body, HttpServletRequest request) {
+        return ResponseEntity.ok(authService.refresh(body == null ? null : body.refreshToken(), resolveClientIp(request), request.getHeader("User-Agent")));
+    }
+
+    @PostMapping("/logout")
+    @Operation(summary = "Log out", description = "Ends the login of the given refresh token. Always 204.")
+    public ResponseEntity<Void> logout(@RequestBody(required = false) RefreshRequest body) {
+        authService.logout(body == null ? null : body.refreshToken());
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/verify-otp")
     @Operation(summary = "Verify Login OTP", description = "Completes a trusted user's login by confirming the 4-digit code emailed to them.")
     public ResponseEntity<AuthResponse> verifyOtp(@Valid @RequestBody OtpVerifyRequest req) {

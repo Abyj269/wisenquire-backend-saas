@@ -28,7 +28,13 @@ public class JwtTokenProvider {
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
+    /** As before: email subject, the configured expiry (24 h). */
     public String generateToken(User user) {
+        return generateToken(user, false, jwtExpirationMs);
+    }
+
+    /** Module 02 P2: {@code subjectIsUserId} = flag auth.subject_user_id; {@code ttlMs} = 15 min with auth.refresh_tokens. */
+    public String generateToken(User user, boolean subjectIsUserId, long ttlMs) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", user.getId());
         claims.put("sessionVersion", user.getSessionVersion());
@@ -44,11 +50,11 @@ public class JwtTokenProvider {
         }
 
         Date now = new Date();
-        Date expiryDate = new Date(now.getTime() + jwtExpirationMs);
+        Date expiryDate = new Date(now.getTime() + ttlMs);
 
         return Jwts.builder()
                 .claims(claims)
-                .subject(user.getEmail())
+                .subject(subjectIsUserId ? String.valueOf(user.getId()) : user.getEmail())
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(getSigningKey(), Jwts.SIG.HS256)
@@ -63,6 +69,19 @@ public class JwtTokenProvider {
                 .getPayload();
         return claims.getSubject();
     }
+
+    /** Who a validated token names: a user id (new form) or an email (old form, accepted for at least one token TTL). */
+    public record Subject(Long userId, String email) { }
+
+    /** Module 02 P2 (D2): a numeric subject is a user id, anything else is an email (an email always contains '@'). */
+    public Subject getSubject(String token) {
+        Claims claims = Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
+        String subject = claims.getSubject();
+        if (subject != null && subject.matches("\\d{1,19}")) return new Subject(Long.valueOf(subject), claims.get("email", String.class));
+        return new Subject(null, subject);
+    }
+
+    public long accessExpirationMs() { return jwtExpirationMs; }
 
     public long getSessionVersion(String token) {
         Number value = Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload().get("sessionVersion", Number.class);

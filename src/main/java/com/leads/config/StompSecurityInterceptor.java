@@ -27,9 +27,11 @@ public class StompSecurityInterceptor implements ChannelInterceptor {
 
     public UsernamePasswordAuthenticationToken authenticate(String token) {
         if(token==null || !tokens.validateToken(token)) throw denied();
-        String email=tokens.getEmailFromToken(token);
+        var subject=tokens.getSubject(token); // module 02 P2: user-id or email subject
         // One identity query per frame (01 Part B item 1); memoised for TenantAccess, cleared after the frame.
-        var user=users.findForAuthenticationByEmail(email).orElseThrow(StompSecurityInterceptor::denied);
+        var user=(subject.userId()!=null ? users.findForAuthenticationById(subject.userId()) : users.findForAuthenticationByEmail(subject.email()))
+                .orElseThrow(StompSecurityInterceptor::denied);
+        String email=user.getEmail();
         var principal=details.toUserDetails(user);
         if(!principal.isEnabled() || tokens.getSessionVersion(token)!=user.getSessionVersion()) throw denied();
         if(memoEnabled) com.leads.service.ActorMemo.put(email,user);

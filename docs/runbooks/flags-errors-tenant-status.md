@@ -76,8 +76,8 @@ Defaults are the `feature_flags.enabled_default` values shipped by the migration
 | `documents.company_code_prefix` | OFF | OFF | module-06 | 2027-12-31 | module 06 | new document numbers carry the company's random code |
 | `broadcast.chunked_tx` | OFF | OFF | module-16 | 2027-06-30 | module 16 | chunked broadcast send, recovery, streamed audience |
 | `ai.short_transactions` | OFF | OFF | module-18 | 2027-06-30 | module 18 | no transaction or counter lock during AI provider calls |
-| `auth.subject_user_id` | OFF | OFF | module-02 | 2027-06-30 | not yet (Phase 2) | JWT subject is the user id |
-| `auth.refresh_tokens` | OFF | OFF | module-02 | 2027-06-30 | not yet (Phase 2) | refresh tokens |
+| `auth.subject_user_id` | OFF | OFF | module-02 | 2027-06-30 | Step 6.1 | JWT subject is the user id (old email tokens still accepted) |
+| `auth.refresh_tokens` | OFF | OFF | module-02 | 2027-06-30 | Step 6.1 (keep OFF until the frontend refresh step) | 15-minute access + rotating 7-day refresh tokens (`docs/runbooks/auth-sessions.md`) |
 | `broadcast.queue_v2` | OFF | OFF | module-16 | 2027-12-31 | not yet (P5) | durable broadcast queue |
 | `webhook.async_inbox` | OFF | OFF | module-12 | 2027-12-31 | not yet (P5) | webhook inbox table |
 | `reports.sql_v2` | OFF | OFF | module-10 | 2027-12-31 | not yet (P5) | reports in SQL |

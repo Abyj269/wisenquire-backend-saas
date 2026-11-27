@@ -24,6 +24,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
             "role", "role.permissions", "organization", "allowedCompanies", "allowedBranches", "allowedBranches.company"})
     @Query("SELECT u FROM User u WHERE u.email = :email")
     Optional<User> findForAuthenticationByEmail(@Param("email") String email);
+
+    /** Module 02 P2 (auth.subject_user_id): the same load as {@link #findForAuthenticationByEmail}, by user id. */
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {
+            "role", "role.permissions", "organization", "allowedCompanies", "allowedBranches", "allowedBranches.company"})
+    @Query("SELECT u FROM User u WHERE u.id = :id")
+    Optional<User> findForAuthenticationById(@Param("id") Long id);
     boolean existsByEmail(String email);
 
     List<User> findByOrganizationId(Long organizationId);

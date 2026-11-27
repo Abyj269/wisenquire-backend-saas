@@ -40,11 +40,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jwt = getJwtFromRequest(request);
 
             if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
-                String email = tokenProvider.getEmailFromToken(jwt);
+                // Module 02 P2 (D2): a user-id subject or an email subject; the principal's name stays the
+                // email, so TenantAccess.actor(), the actor memo and the per-user STOMP queue are unchanged.
+                var subject = tokenProvider.getSubject(jwt);
 
                 // One identity query per request (01 Part B item 1): the same user builds the
                 // principal and is memoised for TenantAccess.actor().
-                var user = users.findForAuthenticationByEmail(email).orElseThrow();
+                var user = (subject.userId() != null ? users.findForAuthenticationById(subject.userId())
+                        : users.findForAuthenticationByEmail(subject.email())).orElseThrow();
+                String email = user.getEmail();
                 UserDetails userDetails = customUserDetailsService.toUserDetails(user);
                 boolean sessionCurrent = tokenProvider.getSessionVersion(jwt) == user.getSessionVersion();
                 if (!sessionCurrent) request.setAttribute(SESSION_REVOKED_ATTRIBUTE, Boolean.TRUE);

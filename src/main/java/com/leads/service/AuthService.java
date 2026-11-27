@@ -49,6 +49,15 @@ public class AuthService {
     private final JwtTokenProvider tokenProvider;
     private final RequestRateLimiter rateLimiter;
     private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+    private final com.leads.flags.FeatureFlags flags;
+    private final RefreshTokenService refreshTokens;
+
+    /** Module 02 P2: access-token lifetime with flag auth.refresh_tokens ON (owner: 15 minutes). */
+    @Value("${app.security.jwt.access-expiration-ms:900000}")
+    private long shortAccessExpirationMs = 900_000L;
+
+    /** A replaced refresh token may still be presented this long (two tabs refreshing at once) without ending the login. */
+    static final java.time.Duration REFRESH_REUSE_GRACE = java.time.Duration.ofSeconds(20);
 
     @Value("${app.security.otp.length:4}")
     private int otpLength;
@@ -98,7 +107,7 @@ public class AuthService {
             // them. Only fall back to OTP when that isn't the case (including
             // when IP restriction isn't active at all for their branches).
             if (clientIpTrusted) {
-                return buildTokenResponse(user);
+                return buildTokenResponse(user, clientIp);
             }
             return issueOtpChallenge(user);
         }
@@ -109,7 +118,7 @@ public class AuthService {
                     "Contact your administrator to add this IP to your branch's trusted list.");
         }
 
-        return buildTokenResponse(user);
+        return buildTokenResponse(user, clientIp);
     }
 
     @Transactional(noRollbackFor = IllegalArgumentException.class)
@@ -132,7 +141,7 @@ public class AuthService {
         }
         latest.setIsUsed(true);
         loginOtpRepository.saveAndFlush(latest);
-        return buildTokenResponse(user);
+        return buildTokenResponse(user, null);
     }
 
     private AuthResponse issueOtpChallenge(User user) {
@@ -202,15 +211,79 @@ public class AuthService {
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + email));
     }
 
-    private AuthResponse buildTokenResponse(User user) {
-        String token = tokenProvider.generateToken(user);
-        UserProfileDto profile = buildUserProfileDto(user);
-
+    /**
+     * Module 02 P2. Flags of the user's organization (both OFF by default = as before):
+     * {@code auth.subject_user_id}: the token's subject is the user id (old email-subject tokens stay valid);
+     * {@code auth.refresh_tokens}: a 15-minute access token plus a rotating refresh token (a new login family).
+     * Without it: the configured access lifetime (24 h) and no refresh token.
+     */
+    private AuthResponse buildTokenResponse(User user, String clientIp) {
+        Long orgId = user.getOrganization() == null ? null : user.getOrganization().getId();
+        if (orgId != null && flags.isOn(com.leads.flags.FeatureFlag.AUTH_REFRESH_TOKENS, orgId)) {
+            return withRefresh(user, refreshTokens.issue(user, refreshTokens.newFamily(), clientIp, null));
+        }
+        boolean byId = orgId != null && flags.isOn(com.leads.flags.FeatureFlag.AUTH_SUBJECT_USER_ID, orgId);
         return AuthResponse.builder()
-                .token(token)
-                .expiresIn(86400000L)
-                .user(profile)
+                .token(tokenProvider.generateToken(user, byId, tokenProvider.accessExpirationMs()))
+                .expiresIn(tokenProvider.accessExpirationMs())
+                .user(buildUserProfileDto(user))
                 .build();
+    }
+
+    private AuthResponse withRefresh(User user, RefreshTokenService.Issued refresh) {
+        Long orgId = user.getOrganization() == null ? null : user.getOrganization().getId();
+        boolean byId = orgId != null && flags.isOn(com.leads.flags.FeatureFlag.AUTH_SUBJECT_USER_ID, orgId);
+        return AuthResponse.builder()
+                .token(tokenProvider.generateToken(user, byId, shortAccessExpirationMs))
+                .expiresIn(shortAccessExpirationMs)
+                .refreshToken(refresh.token())
+                .refreshExpiresIn(refreshTokens.refreshExpirationMs())
+                .user(buildUserProfileDto(user))
+                .build();
+    }
+
+    private static com.leads.exception.ApiException sessionEnded(String message) {
+        return new com.leads.exception.ApiException(com.leads.exception.ErrorCode.SESSION_REVOKED, message);
+    }
+
+    /**
+     * Module 02 P2 (D11): rotates a refresh token. The old token is replaced by a new one in the same login family.
+     * Presenting a token that was already replaced (outside a short grace for two tabs refreshing at once), revoked or
+     * expired ends the whole family: a stolen copy cannot outlive the real user's next refresh. A changed sessionVersion
+     * (role edit, password reset, deactivation) also ends it. Revocations are kept even though the call answers 401.
+     */
+    @Transactional(noRollbackFor = com.leads.exception.ApiException.class)
+    public AuthResponse refresh(String rawToken, String clientIp, String userAgent) {
+        rateLimiter.check("refresh-ip:" + clientIp, 120, 60_000);
+        var row = refreshTokens.lock(rawToken).orElseThrow(() -> sessionEnded("Your session has ended. Please sign in again."));
+        java.time.LocalDateTime now = refreshTokens.now();
+        if (row.replacedBy() != null || row.revokedAt() != null) {
+            boolean twoTabs = row.replacedBy() != null && row.revokedAt() != null && row.revokedAt().isAfter(now.minus(REFRESH_REUSE_GRACE));
+            if (!twoTabs) {
+                refreshTokens.revokeFamily(row.familyId());
+                throw sessionEnded("This session was ended for your security. Please sign in again.");
+            }
+        }
+        if (row.expiresAt().isBefore(now)) throw sessionEnded("Your session has expired. Please sign in again.");
+        User user = userRepository.findForAuthenticationById(row.userId()).orElse(null); // id from the verified token row
+        Long orgId = user == null || user.getOrganization() == null ? null : user.getOrganization().getId();
+        boolean usable = user != null && Boolean.TRUE.equals(user.getIsActive())
+                && (user.getOrganization() == null || Boolean.TRUE.equals(user.getOrganization().getIsActive()))
+                && java.util.Objects.equals(user.getSessionVersion(), row.sessionVersion())
+                && orgId != null && flags.isOn(com.leads.flags.FeatureFlag.AUTH_REFRESH_TOKENS, orgId);
+        if (!usable) {
+            refreshTokens.revokeFamily(row.familyId());
+            throw sessionEnded("Your session has ended. Please sign in again.");
+        }
+        RefreshTokenService.Issued next = refreshTokens.issue(user, row.familyId(), clientIp, userAgent);
+        if (row.replacedBy() == null) refreshTokens.replace(row.id(), next.id());
+        return withRefresh(user, next);
+    }
+
+    /** Module 02 P2: ends the login family of this refresh token. Always succeeds (an unknown token changes nothing). */
+    @Transactional
+    public void logout(String rawToken) {
+        refreshTokens.lock(rawToken).ifPresent(row -> refreshTokens.revokeFamily(row.familyId()));
     }
 
     @Transactional(readOnly = true)

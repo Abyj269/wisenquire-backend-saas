@@ -18,6 +18,21 @@ public class AsyncConfig {
      * is full a submit is rejected (TaskRejectedException) instead of growing without limit;
      * BroadcastServiceImpl turns that into a 409 CONFLICT "try again shortly".
      */
+    /** Module 02 P2: transactional emails sent after the request has answered (password reset), outside any transaction. */
+    @Bean(name = "mailExecutor")
+    public ThreadPoolTaskExecutor mailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("mail-");
+        executor.setTaskDecorator(new TenantTaskDecorator());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(15);
+        executor.initialize();
+        return executor;
+    }
+
     @Bean(name = "broadcastExecutor")
     public ThreadPoolTaskExecutor broadcastExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

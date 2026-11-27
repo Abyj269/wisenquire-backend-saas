@@ -16,6 +16,9 @@ public class AuthResponse {
     @Builder.Default
     private String tokenType = "Bearer";
     private Long expiresIn;
+    /** Module 02 P2: only with flag auth.refresh_tokens ON for the user's organization (otherwise null). */
+    private String refreshToken;
+    private Long refreshExpiresIn;
     private UserProfileDto user;
 
     // --- Trusted-user OTP challenge ---

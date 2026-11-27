@@ -45,4 +45,23 @@ public class EmailService {
             throw new IllegalStateException("Unable to deliver the login code. Please retry or contact your administrator.");
         }
     }
+
+    /**
+     * Module 02 P2: the password-reset link. Best effort (logged, never thrown): the caller has already answered 202,
+     * and it runs on the mail executor, outside any transaction.
+     */
+    public void sendPasswordResetEmail(String toEmail, String link, int expiryMinutes) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setFrom(fromAddress);
+            message.setTo(toEmail);
+            message.setSubject("Reset your password");
+            message.setText("We received a request to reset the password of your account.\n\n"
+                    + "Open this link to choose a new password (it works once, for " + expiryMinutes + " minutes):\n" + link
+                    + "\n\nIf you did not ask for this, you can ignore this email; your password stays the same.");
+            mailSender.send(message);
+        } catch (Exception e) {
+            log.warn("Password reset email delivery failed.", e);
+        }
+    }
 }
