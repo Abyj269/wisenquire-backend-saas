@@ -554,7 +554,12 @@ public class TenantFixture {
         switch (p) {
             case ORG_ADMIN -> { }
             case COMPANY_MGR -> user.getAllowedCompanies().add(em.getReference(Company.class, c1));
-            default -> user.getAllowedBranches().add(em.getReference(Branch.class, branchId.get(home(o))));
+            // Like the real user form, a BRANCH-level user is linked to its branch AND that branch's company
+            // (the form requires a company for COMPANY and BRANCH users and only offers branches of selected companies).
+            default -> {
+                user.getAllowedCompanies().add(em.getReference(Company.class, companyId.get(home(o).company())));
+                user.getAllowedBranches().add(em.getReference(Branch.class, branchId.get(home(o))));
+            }
         }
         userId.put(o + ":" + p, persist(user).getId());
     }

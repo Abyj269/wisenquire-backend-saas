@@ -207,9 +207,10 @@ public final class StagingSeed {
                 persist(WhatsAppConfiguration.builder().company(company).branch(branch).phoneNumberId(pnid).wabaId("stg-waba-" + tc + "-" + bc)
                         .appId("stg-app-" + tc).accessToken("staging-mock-token-" + pnid).verifyToken("stg-verify-" + pnid)
                         .appSecret("staging-app-secret-" + pnid).displayPhoneNumber("+97140" + String.format("%07d", Math.abs(pnid.hashCode()) % 10_000_000)).build());
-                long mgr = user(org, branchMgr, "branch.mgr." + bc + "@" + tc + ".staging.test", "Branch", "Manager " + bc, List.of(), List.of(branch), tc, "BRANCH_MGR", c.code(), bc, c.zone());
-                long a1 = user(org, agent, "agent1." + bc + "@" + tc + ".staging.test", "Agent One", bc, List.of(), List.of(branch), tc, "AGENT_OWN_1", c.code(), bc, c.zone());
-                long a2 = user(org, agent, "agent2." + bc + "@" + tc + ".staging.test", "Agent Two", bc, List.of(), List.of(branch), tc, "AGENT_OWN_2", c.code(), bc, c.zone());
+                // Like the real user form: branch users are linked to their branch and its company.
+                long mgr = user(org, branchMgr, "branch.mgr." + bc + "@" + tc + ".staging.test", "Branch", "Manager " + bc, List.of(company), List.of(branch), tc, "BRANCH_MGR", c.code(), bc, c.zone());
+                long a1 = user(org, agent, "agent1." + bc + "@" + tc + ".staging.test", "Agent One", bc, List.of(company), List.of(branch), tc, "AGENT_OWN_1", c.code(), bc, c.zone());
+                long a2 = user(org, agent, "agent2." + bc + "@" + tc + ".staging.test", "Agent Two", bc, List.of(company), List.of(branch), tc, "AGENT_OWN_2", c.code(), bc, c.zone());
                 branches.add(new BranchRef(branch.getId(), pnid, company.getId(), mgr, a1, a2));
             }
             em.flush();
