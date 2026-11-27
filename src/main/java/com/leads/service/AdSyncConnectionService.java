@@ -36,6 +36,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Slf4j
 public class AdSyncConnectionService {
+    private final CompanyClock companyClock;
+    private final TenantAccess access;
 
     // Meta's Ads Insights API supports lookback to this far; used as-is for
     // Google too — its client just returns whatever data actually exists in
@@ -52,14 +54,19 @@ public class AdSyncConnectionService {
 
     @Transactional
     public void syncConnection(AdAccountConnection connection) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = companyToday(connection);
         doSync(connection, today.minusDays(TRAILING_SYNC_DAYS), today, true);
     }
 
     @Transactional
     public void backfill(AdAccountConnection connection) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = companyToday(connection);
         doSync(connection, today.minusMonths(BACKFILL_MONTHS), today, false);
+    }
+
+    /** D15 (module 19 P1): the sync window ends on the company's own today, not the server date. */
+    private LocalDate companyToday(AdAccountConnection connection) {
+        return companyClock.today(access.company(connection.getCompany().getId()));
     }
 
     private void doSync(AdAccountConnection connection, LocalDate fromDate, LocalDate toDate, boolean activeOrPausedOnly) {

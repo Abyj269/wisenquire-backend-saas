@@ -61,6 +61,10 @@ public abstract class AbstractIntegrationTest {
     @MockBean
     protected com.leads.service.AiMeteredCalls aiCalls;
 
+    /** Module 19: the Meta / Google Ads clients; no real ad platform is ever called. */
+    @MockBean
+    protected com.leads.service.AdsProviderClientFactory adsClients;
+
     @Autowired
     protected TenantFixture fixture;
 }

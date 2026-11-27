@@ -74,8 +74,7 @@ public class AdAccountConnectionController {
     @PreAuthorize("hasAuthority('ROLE_SUPER_ADMIN') or hasAuthority('COMPANY_BRANCH_SETTINGS:EDIT')")
     @Operation(summary = "Backfill this connection's historical ads/spend (asynchronous — check lastSyncStatus for completion)")
     public ResponseEntity<Void> backfill(@PathVariable Long id) {
-        access.record(com.leads.model.entity.AdAccountConnection.class, id);
-        syncService.backfillAsync(id);
+        connectionService.requestBackfill(id); // module 19 P1: the scope check lives in the service
         return ResponseEntity.accepted().build();
     }
 }

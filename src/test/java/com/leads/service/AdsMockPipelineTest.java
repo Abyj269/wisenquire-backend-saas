@@ -65,7 +65,10 @@ class AdsMockPipelineTest {
         when(ads.save(any())).thenAnswer(i -> { Ad a = i.getArgument(0); if (a.getId() == null) a.setId((long) storedAds.size()+1); storedAds.put(a.getExternalAdId(), a); return a; });
         when(insights.findByAdIdAndStatDate(anyLong(), any())).thenAnswer(i -> Optional.ofNullable(storedInsights.get(i.getArgument(0)+":"+i.getArgument(1))));
         when(insights.save(any())).thenAnswer(i -> { AdInsight row = i.getArgument(0); storedInsights.put(row.getAd().getId()+":"+row.getStatDate(), row); return row; });
-        var sync = new AdSyncConnectionService(connections, ads, insights, leads, conversations, new AdsProviderClientFactory(List.of(client)));
+        var access = mock(TenantAccess.class);
+        when(access.company(1L)).thenReturn(company); // module 19: the sync window uses the company's today
+        var sync = new AdSyncConnectionService(new CompanyClock(java.time.Clock.systemUTC()), access,
+                connections, ads, insights, leads, conversations, new AdsProviderClientFactory(List.of(client)));
         sync.syncConnection(connection);
         sync.syncConnection(connection);
         assertEquals(2, storedAds.size(), "Repeat sync must not duplicate ads");

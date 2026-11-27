@@ -8,6 +8,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 /**
  * Orchestrates ad-account syncing across every active {@link
  * AdAccountConnection}. Each connection's actual work happens on {@link
@@ -31,14 +33,18 @@ public class AdSyncService {
     @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = com.leads.jobs.JobLocks.ADS_SYNC, lockAtMostFor = "PT50M", lockAtLeastFor = "PT1M")
     public void runScheduledSync() {
         com.leads.jobs.JobRuns.record(com.leads.jobs.ScheduledJob.ADS_SYNC);
-        for (AdAccountConnection connection : connectionRepo.findByIsActiveTrue()) {
-            try {
-                syncConnectionService.syncConnection(connection);
-            } catch (Exception ex) {
-                log.warn("Ad sync failed for connection {} ({} / {}): {}",
-                        connection.getId(), connection.getProvider(), connection.getExternalAccountId(), ex.getMessage());
-                syncConnectionService.markFailed(connection.getId(), ex.getMessage());
-            }
+        // Module 19 P1 (F-3 / job context): each connection runs as its own company, with orgId in the log context.
+        for (Object[] scope : connectionRepo.findActiveScopes()) {
+            Long connectionId = (Long) scope[0];
+            TenantAccess.asCompanyJob((Long) scope[1], (Long) scope[2], () -> connectionRepo.findById(connectionId).ifPresent(connection -> {
+                try {
+                    syncConnectionService.syncConnection(connection);
+                } catch (Exception ex) {
+                    log.warn("Ad sync failed for connection {} ({} / {}): {}",
+                            connection.getId(), connection.getProvider(), connection.getExternalAccountId(), ex.getMessage());
+                    syncConnectionService.markFailed(connection.getId(), ex.getMessage());
+                }
+            }));
         }
     }
 
@@ -56,9 +62,15 @@ public class AdSyncService {
     }
 
     /** Historical backfill on a newly-created connection (or on explicit request) — async since a multi-year daily fetch shouldn't block the HTTP request that triggered it. */
+    /**
+     * Internal: callers check scope first (AdAccountConnectionService.requestBackfill, or a just-saved connection).
+     * Module 19 P1: runs as the connection's company, with orgId in the log context.
+     */
     @Async("adsSyncExecutor")
     public void backfillAsync(Long connectionId) {
-        connectionRepo.findById(connectionId).ifPresent(connection -> {
+        List<Object[]> scope = connectionRepo.findScope(connectionId);
+        if (scope.isEmpty()) return;
+        TenantAccess.asCompanyJob((Long) scope.get(0)[0], (Long) scope.get(0)[1], () -> connectionRepo.findById(connectionId).ifPresent(connection -> {
             try {
                 syncConnectionService.backfill(connection);
             } catch (Exception ex) {
@@ -66,6 +78,6 @@ public class AdSyncService {
                         connection.getId(), connection.getProvider(), connection.getExternalAccountId(), ex.getMessage());
                 syncConnectionService.markFailed(connection.getId(), ex.getMessage());
             }
-        });
+        }));
     }
 }

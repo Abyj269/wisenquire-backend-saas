@@ -6,12 +6,3 @@
 # (EndpointCoverageIT.PENDING_CEILING); lower the ceiling whenever lines are removed.
 
 # --- module 02 auth-identity
-# --- module 19 ads
-DELETE /ads/connections/{id}  # module 19 ads (AdAccountConnectionController)
-GET /ads/connections  # module 19 ads (AdAccountConnectionController)
-GET /ads/connections/branch/{branchId}  # module 19 ads (AdAccountConnectionController)
-GET /reports/ads/performance  # module 19 ads (AdReportController)
-POST /ads/connections  # module 19 ads (AdAccountConnectionController)
-POST /ads/connections/{id}/backfill  # module 19 ads (AdAccountConnectionController)
-POST /ads/connections/{id}/sync  # module 19 ads (AdAccountConnectionController)
-POST /ads/connections/{id}/test  # module 19 ads (AdAccountConnectionController)

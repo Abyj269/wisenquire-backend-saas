@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class AdAccountConnectionService {
+    private final org.springframework.transaction.PlatformTransactionManager transactions;
     private final TenantAccess access;
 
     private final AdAccountConnectionRepository connectionRepo;
@@ -168,12 +169,18 @@ public class AdAccountConnectionService {
         connectionRepo.deleteById(id);
     }
 
-    @Transactional(readOnly = true)
+    /** Module 19 P1 (CLAUDE.md hard rule 2): the connection is read in a short read; the provider call runs with none open. */
     public AdConnectionTestResult testConnection(Long id) {
-        access.record(com.leads.model.entity.AdAccountConnection.class, id);
-        AdAccountConnection connection = connectionRepo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Ad account connection not found: " + id));
+        var read = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        read.setReadOnly(true);
+        AdAccountConnection connection = read.execute(st -> access.record(AdAccountConnection.class, id));
         return providerClientFactory.resolve(connection.getProvider()).testConnection(connection);
+    }
+
+    /** Module 19 P1: the scope check for a manual backfill (was in the controller), then the async run. */
+    public void requestBackfill(Long id) {
+        access.record(AdAccountConnection.class, id);
+        adSyncService.backfillAsync(id);
     }
 
     private void setIfPresentElseRequireOnCreate(String value, boolean isNew, String label, java.util.function.Consumer<String> setter) {

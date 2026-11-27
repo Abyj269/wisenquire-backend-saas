@@ -38,6 +38,20 @@ public class TenantAccess {
         return () -> inCompany(captured, task);
     }
 
+    /**
+     * Module 19 P1: runs {@code work} as a background job for one company: TenantAccess scope = that company and
+     * TenantContext (MDC {@code orgId}) = its organization; the caller's context is restored afterwards.
+     */
+    static void asCompanyJob(Long companyId, Long organizationId, Runnable work) {
+        var previous = com.leads.config.TenantContext.get().orElse(null);
+        com.leads.config.TenantContext.set(new com.leads.config.TenantContext.Data(null, organizationId, null));
+        try {
+            inCompany(companyId, work);
+        } finally {
+            if (previous != null) com.leads.config.TenantContext.set(previous); else com.leads.config.TenantContext.clear();
+        }
+    }
+
     /** Module 17: the company a background run is scoped to (null on a user request); for diagnostics and tests. */
     public static Long systemCompanyId() { return SYSTEM_COMPANY.get(); }
 

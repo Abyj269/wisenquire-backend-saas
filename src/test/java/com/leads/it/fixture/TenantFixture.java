@@ -286,6 +286,22 @@ public class TenantFixture {
 
     public String leadNumber(Long leadId) { return inTx(() -> em.find(Lead.class, leadId).getLeadNumber()); }
 
+    /** Module 19: a fresh Meta ad-account connection on {@code s}'s branch, or company-wide (no branch). */
+    public Long freshAdConnection(Slot s, boolean companyWide) {
+        // The service keeps one connection per (company, branch, provider); replace the slot's previous one (it has no ads).
+        inTx(() -> {
+            var q = em.createQuery("DELETE FROM AdAccountConnection c WHERE c.company.id = :c AND c.provider = :p AND "
+                    + (companyWide ? "c.branch IS NULL" : "c.branch.id = :b"))
+                    .setParameter("c", companyId.get(s.company())).setParameter("p", AdProvider.META);
+            if (!companyWide) q.setParameter("b", branchId.get(s));
+            return q.executeUpdate();
+        });
+        return inTx(() -> persist(AdAccountConnection.builder().company(companyRef(s))
+                .branch(companyWide ? null : em.getReference(Branch.class, branchId.get(s)))
+                .provider(AdProvider.META).externalAccountId("act_it_" + seq.incrementAndGet()).accessToken("it-not-a-real-token")
+                .displayName("IT Ads").build()).getId());
+    }
+
     /** Module 18: a text (or audio) inbound message in conversation {@code conversationId}. */
     public Long freshInboundMessage(Long conversationId, String type, String body) {
         return inTx(() -> persist(WhatsAppMessage.builder().conversation(em.getReference(WhatsAppConversation.class, conversationId))

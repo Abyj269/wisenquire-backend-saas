@@ -36,7 +36,7 @@ class EndpointCoverageIT extends AbstractIntegrationTest {
      * 141 at Step 3.2 (2026-11-24); 139 after module 02 P1 (2026-11-25). Lower it whenever a module
      * moves lines into the matrix.
      */
-    static final int PENDING_CEILING = 8;
+    static final int PENDING_CEILING = 0;
 
     @Autowired @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping mappings;
 

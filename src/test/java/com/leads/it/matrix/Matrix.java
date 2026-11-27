@@ -43,6 +43,7 @@ public final class Matrix {
         all.addAll(SavedReplyRows.specs());
         all.addAll(AutomationRows.specs());
         all.addAll(AiRows.specs());
+        all.addAll(AdsRows.specs());
         return all;
     }
 
